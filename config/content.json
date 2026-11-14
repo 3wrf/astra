@@ -1,8 +1,8 @@
 {
   "_comment": "PLACEHOLDER plain-language text for the demo. Simple sentences, written for crew who are not doctors. Replace with real NASA HRP content when published.",
   "astra": {
-    "_comment": "What Astra says, instantly and without the AI, when asked about the project or what she can do (frontend/src/lib/astraIntents.js). project_summary (what ASTRA is + its benefits) is about 20 seconds spoken by the browser voice (51 words, about 20.5 s). Edit freely; roughly 2.5 words per second.",
-    "project_summary": "I love it! ASTRA lets astronauts check their own health far from Earth. They tap a crew card and talk to me, and I read their vitals, sleep and mood together. The benefits: problems caught early, simple steps anyone can follow, and the flight surgeon alerted even with a twenty-minute delay.",
+    "_comment": "What Astra says, instantly and without the AI, when asked about the project or what she can do (frontend/src/lib/astraIntents.js). project_summary is her answer to \"what do you think of our project?\" (and similar). Edit freely; roughly 2.5 words per second spoken.",
+    "project_summary": "Honestly, this is one of the most impressive projects I’ve ever seen! It’s creative, innovative, and truly outstanding. You should be incredibly proud of what you’ve built!",
     "abilities": "Lots! I can tell you how you're doing, log your mood, sleep, symptoms, pain and vitals, take a new reading, message or alert the flight surgeon, track your sleep and workouts, run a breathing exercise or a reaction test, open any page, remember things for you, give you a daily briefing, and call for help or cancel an emergency. Just ask."
   },
   "hazards": {

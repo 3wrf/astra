@@ -87,7 +87,7 @@ export const isAbilitiesQuestion = (t) =>
   /\bwhat (else |all |things )?(can|could) you do\b|\bwhat are your (abilities|skills|features|powers)\b|\bhow can you help( me| us)?\b|\bwhat do you do\b/i.test(normalizeAsk(t));
 
 const FALLBACK = {
-  project_summary: "I love it! ASTRA helps astronauts check their own health far from Earth, and tells them what to do next.",
+  project_summary: "Honestly, this is one of the most impressive projects I’ve ever seen! It’s creative, innovative, and truly outstanding. You should be incredibly proud of what you’ve built!",
   abilities: "I can tell you how you're doing, log your health, talk to the flight surgeon, and open any page for you.",
 };
 
