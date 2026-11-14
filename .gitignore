@@ -2,8 +2,10 @@
 data/*.db
 data/secret_key
 data/ai_api_key
-# optional voice-tone model (python -m backend.services.emotion download), ~378 MB
-models/
+# optional voice-tone / face / pose models, downloaded into the ROOT models/ folder (~378 MB).
+# Anchored with a leading "/" on purpose: a bare "models/" also ignored frontend/public/models
+# and frontend/dist/models (the 3D body, exercise coach and mission scenes).
+/models/
 __pycache__/
 *.pyc
 .pytest_cache/

@@ -11,6 +11,7 @@ import { post } from "../../../lib/api.js";
 import { fmtTime, MOOD_LABELS, moodScore } from "../../../lib/format.js";
 import { useHistory, useJournal, useMission, useVoiceTone, useVoiceToneStatus } from "../../../lib/queries.js";
 import { countTones, latestTalk, pct, talkMix, TONE_DISCLAIMER, TONE_LABELS, TONE_ORDER, TONE_PRIVACY } from "../../../lib/toneClip.js";
+import { toneSetupMessage } from "../../../lib/toneSetup.js";
 import { useAstra } from "../../../components/AstraProvider.jsx";
 import { LatestConversationAnalysis } from "./mind/ConversationAnalysis.jsx";
 import { DailyMoodCheck } from "./mind/DailyMoodCheck.jsx";
@@ -166,20 +167,15 @@ function Journal({ astroId }) {
 // "Wanna talk?": a hands-free chat with Astra (her usual voice screen), during which each
 // phrase also gets a voice tone ESTIMATE made on this laptop. Shown only here, afterwards, and
 // kept apart from the self-reported mood above (own table, own card, never in the mood chart).
-const TONE_STATUS_TEXT = {
-  ready: "Voice tone estimates are on for this talk.",
-  loading: "The voice tone model is still loading…",
-  idle: "The voice tone model is still loading…",
-};
-
 function WannaTalk({ astroId }) {
   const astra = useAstra();
   const status = useVoiceToneStatus();
-  const st = status.data?.state;
+  const tone = toneSetupMessage(status);
   const Recognition = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+  const brave = typeof navigator !== "undefined" && !!navigator.brave; // has the API, but its service is off
   const own = astra.available && Number(astra.astroId) === Number(astroId);
   const why = !own ? "Only the astronaut can start a talk, from their own sign-in."
-    : !Recognition ? "Voice needs Chrome or Edge."
+    : !Recognition || brave ? `Voice needs Chrome or Edge${brave ? " (Brave switches off voice recognition)" : ""}.`
     : typeof window !== "undefined" && !window.isSecureContext ? "Voice needs the app opened as http://localhost:5000 (or https)."
     : "";
   return (
@@ -189,9 +185,14 @@ function WannaTalk({ astroId }) {
         <Icon name="mic" size={16} /> Talk to Astra
       </Button>
       {why && <p className="m-0 text-[13px] text-muted">{why}</p>}
-      <p className="m-0 text-[13px] text-ink-2">
-        {TONE_STATUS_TEXT[st] || "Voice tone estimates aren’t set up on this laptop. The talk works the same without them."}
-      </p>
+      <div className={cx("text-[13px]", tone.tone === "setup" ? "text-check-fg" : "text-ink-2")}>
+        <p className="m-0">{tone.text}</p>
+        {tone.steps && (
+          <ol className="m-0 mt-2 flex list-decimal flex-col gap-1 pl-5">
+            {tone.steps.map((s) => <li key={s}><code className="select-all break-all rounded bg-raised px-1.5 py-0.5 text-[12px] text-ink">{s}</code></li>)}
+          </ol>
+        )}
+      </div>
       <p className="m-0 text-xs text-subtle">{TONE_PRIVACY}</p>
     </Card>
   );
