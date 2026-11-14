@@ -21,7 +21,9 @@ def client(tmp_path_factory, monkeypatch_module):
                                host="0.0.0.0", web_port=5000)
     flask_app, socketio, bridge = app_module.create_app(args)
     flask_app.config["TESTING"] = True
-    return flask_app.test_client()
+    c = flask_app.test_client()
+    c.flask_app, c.socketio = flask_app, socketio  # for Socket.IO tests
+    return c
 
 
 @pytest.fixture(scope="module")
@@ -395,6 +397,25 @@ def test_chat_offers_cancel_emergency_only_while_one_is_active(client, monkeypat
     monkeypatch.setitem(sessions.emergency, "active", True)
     res = client.post("/api/astronauts/1/chat", json={"message": "turn off the alarm"})
     assert res.get_json()["actions"] == [{"type": "cancel_emergency"}]
+
+
+def _emergency_events_on_connect(client):
+    sio = client.socketio.test_client(client.flask_app)
+    try:
+        return [e["args"][0] for e in sio.get_received() if e["name"] == "emergency"]
+    finally:
+        sio.disconnect()
+
+
+def test_a_page_that_connects_is_told_the_emergency_state_on_or_off(client):
+    """A page that RE-connects after missing the cancel must drop its red screen."""
+    client.post("/api/emergency", json={"action": "cancel"})
+    assert _emergency_events_on_connect(client) == [{"active": False, "text": ""}]
+    client.post("/api/emergency", json={"text": "SOS by voice", "astronaut_id": 1})
+    try:
+        assert _emergency_events_on_connect(client) == [{"active": True, "text": "SOS by voice"}]
+    finally:
+        client.post("/api/emergency", json={"action": "cancel"})
 
 
 def test_mission_profile_can_change(client):

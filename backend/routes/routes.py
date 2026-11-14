@@ -2085,9 +2085,13 @@ def create_routes(app, socketio, bridge):
     @socketio.on("connect")
     def on_connect():
         socketio.emit("serial_status", {"status": bridge.status})
-        # A page opened or reconnected mid-emergency must still show it (and let Astra cancel it).
-        if sessions.emergency["active"]:
-            socketio.emit("emergency", {"active": True, "text": sessions.emergency.get("text", "")}, to=request.sid)
+        # Every page that connects or RE-connects gets the emergency state, on or off: one that
+        # reconnects mid-emergency must show it, and one that missed the cancel while its
+        # connection was down (a background tab) must drop the red screen -- it used to stay
+        # red until a refresh.
+        socketio.emit("emergency", {"active": bool(sessions.emergency["active"]),
+                                    "text": sessions.emergency.get("text", "") if sessions.emergency["active"] else ""},
+                      to=request.sid)
 
     def _is_explicit_done(msg, astro_id):
         """Was this end_session the Done button (sign the browser out too) rather

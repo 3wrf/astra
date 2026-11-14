@@ -25,6 +25,7 @@ import { audioCtx, micMeter } from "../lib/stationAudio.js";
 import { micLevels, wakeIsYou } from "../lib/hearing.js";
 import { useVoice, voiceState } from "../lib/useVoice.js";
 import { isEcho } from "../lib/bargeIn.js";
+import { isEmergencyPhrase } from "../lib/astraActions.js";
 import { useSocketEvent } from "../lib/socket.js";
 import { missionDaySeconds, withLiveStatus } from "../lib/schedule.js";
 import {
@@ -153,10 +154,15 @@ export function AstraProvider({ children }) {
   const callRef = useRef(null);
   useEffect(() => { callRef.current = call; }, [call]);
   const speakerTextRef = useRef(() => ""); // what she's announcing right now (set below)
+  // Voice SOS, like the SOS button (useConsultation.sosNow): kept in a ref so the listener
+  // isn't re-made on every render.
+  const sosRef = useRef(null);
+  useEffect(() => { sosRef.current = consultation.sosNow; });
   useEffect(() => {
     if (!listen) return undefined;
     // The microphone level, so the name has to come from someone close (lib/hearing.js).
     micMeter.start();
+    const herOwnWords = (heard) => voiceState.speaking && (!heard || isEcho(heard, speakerTextRef.current()));
     const l = createWakeListener({
       Recognition,
       onState: setListenerState,
@@ -164,10 +170,15 @@ export function AstraProvider({ children }) {
       onWake: (hit) => {
         // While she's announcing something, only HER OWN words are ignored; you saying
         // "Astra" over her still opens the call (it used to be ignored, so she seemed deaf).
-        if (voiceState.speaking && (!hit.heard || isEcho(hit.heard, speakerTextRef.current()))) return;
+        if (herOwnWords(hit.heard)) return;
+        // "Astra, emergency call now" / "Astra, I need help": straight to the SOS, no call screen.
+        if (isEmergencyPhrase(hit.question)) { sosRef.current?.(hit.question); return; }
         l.pause(); // right away: the voice screen starts its own recognition
         open(hit.question);
       },
+      // ...and the same without her name: "emergency call now", "I need help", "SOS".
+      isEmergency: isEmergencyPhrase,
+      onEmergency: ({ heard }) => { if (!herOwnWords(heard)) sosRef.current?.(heard); },
     });
     listenerRef.current = l;
     l.start();

@@ -133,6 +133,26 @@ export function useConsultation({ astroId, content, mission, persistDiscomfort, 
     return e;
   }, [astroId]);
 
+  // "Emergency call now" / "I need help" / "SOS": acts like the SOS button -- the emergency
+  // starts AT ONCE (no countdown): every screen turns red, the CYD flashes, the flight surgeon
+  // gets the alert and report. Cancel it like any emergency (the button, or "Astra, cancel the
+  // emergency"). The countdown above stays only for an SOS the AI proposes from free text.
+  const sosFiredAt = useRef(0);
+  const sosNow = useCallback(async (said) => {
+    if (emergencyStore.get().active || Date.now() - sosFiredAt.current < 10000) return false; // already on
+    sosFiredAt.current = Date.now();
+    clearTimeout(emergencyTimer.current);
+    setEmergency(null);
+    try {
+      await post("/emergency", { text: `SOS by voice: “${String(said || "help").slice(0, 80)}”`, astronaut_id: astroId });
+      return true;
+    } catch (err) {
+      sosFiredAt.current = 0;
+      console.error("[astra] couldn't start the emergency:", err);
+      return false;
+    }
+  }, [astroId]);
+
   const cancelEmergency = useCallback(() => {
     if (!emergencyRef.current) return null;
     clearTimeout(emergencyTimer.current);
@@ -186,12 +206,13 @@ export function useConsultation({ astroId, content, mission, persistDiscomfort, 
       remember(text, reply);
       return { text: reply };
     }
-    if (!emergencyRef.current && isEmergencyPhrase(text)) {
-      // Never wait for the AI for this one.
-      const reply = "Calling for help in 5 seconds. Say cancel if you're okay.";
+    if (isEmergencyPhrase(text)) {
+      // Like the SOS button: never waits for the AI, and starts at once.
+      const ok = await sosNow(text);
+      const reply = ok ? "Emergency started. I've alerted the flight surgeon and every screen. Help is on the way."
+        : "I couldn't reach the station to call for help. Hold the SOS button on your device.";
       add({ who: "assistant", text: reply });
       remember(text, reply);
-      startEmergency(text);
       return { text: reply };
     }
 
@@ -262,7 +283,7 @@ export function useConsultation({ astroId, content, mission, persistDiscomfort, 
     remember(text, result.text);
     if (activity) onActivity?.(activity);
     return { text: result.text, navigate: nav ? PAGES[nav.page]?.path : null, activity };
-  }, [astroId, content, mission, confirm, cancel, cancelEmergency, startEmergency, onActivity]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [astroId, content, mission, confirm, cancel, cancelEmergency, startEmergency, sosNow, onActivity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const say = useCallback((msg) => add({ who: "assistant", ...msg }), []);
 
@@ -298,6 +319,6 @@ export function useConsultation({ astroId, content, mission, persistDiscomfort, 
 
   return {
     messages, submit, say, announce, ensureConversation, thinking, source, pending, confirm, cancel, goTo, markInterrupted,
-    emergency, cancelEmergency,
+    emergency, cancelEmergency, sosNow,
   };
 }

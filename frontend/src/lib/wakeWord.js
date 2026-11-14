@@ -70,6 +70,10 @@ export function createWakeListener({
   Recognition, onWake, onState, accept = () => true, schedule = setTimeout, unschedule = clearTimeout,
   every = setInterval, unevery = clearInterval, now = () => Date.now(), watchdogMs = WATCHDOG_MS,
   interimMs = 1000,
+  // Optional: a FINISHED phrase without her name that is a call for help ("emergency call
+  // now", "I need help") -> onEmergency({ heard }), like pressing the SOS button. Finished
+  // phrases only, so "I need help..." can still go on "...with my sleep log".
+  isEmergency = null, onEmergency = null,
 }) {
   let rec = null;
   let running = false;
@@ -143,7 +147,19 @@ export function createWakeListener({
         if (res.isFinal) {
           if (hit) fire(i, hit, "final");
           else if (armed?.i === i) disarm();
-          else console.debug(`[astra] heard (no name): "${res[0]?.transcript || ""}"`);
+          else if (isEmergency && onEmergency && running && !paused) {
+            let sos = null;
+            for (let a = 0; a < (res.length || 1); a++) {
+              if (isEmergency(res[a]?.transcript)) { sos = { question: "", confidence: res[a]?.confidence, heard: res[a]?.transcript }; break; }
+            }
+            if (sos && accept(sos)) {
+              fired.add(i);
+              console.warn(`[astra] SOS phrase heard: "${sos.heard}"`);
+              onEmergency({ heard: sos.heard });
+            } else {
+              console.debug(`[astra] heard (no name): "${res[0]?.transcript || ""}"`);
+            }
+          } else console.debug(`[astra] heard (no name): "${res[0]?.transcript || ""}"`);
         } else if (hit) {
           disarm();
           const t = schedule(() => { if (armed?.i === i) fire(i, armed.hit, "unfinished"); }, hit.question ? interimMs * 1.5 : interimMs);

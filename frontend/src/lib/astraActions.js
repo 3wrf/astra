@@ -137,9 +137,11 @@ export const isYes = (t) => short(t) && !isNo(t)
 // Strict on purpose: this starts the SOS countdown WITHOUT asking the AI, so a phrase that only
 // mentions help or emergencies must not trigger it ("can you help me now with my sleep log",
 // "should I call for help?", "what do I do in an emergency?", "don't call for help").
-const SOS_STRONG = /\b(mayday|this is an emergency|it'?s an emergency|we have an emergency|i can'?t breathe|i cannot breathe)\b/i;
+const SOS_STRONG = /\b(mayday|sos|this is an emergency|it'?s an emergency|we have an emergency|emergency call|call (an |the )?emergency|i can'?t breathe|i cannot breathe)\b/i;
 // "help now" phrases count only as the whole request (at the end), not inside a longer question.
-const SOS_HELP_NOW = /\b(i need help (right )?now|help me (right )?now|(please )?call (for )?help( right)?( now)?|send help( now)?)\s*(please|astra)?[\s.!]*$/i;
+// "I need help" / "help me" count when that's the whole request ("Astra, I need help"), not
+// "I need help with my sleep log".
+const SOS_HELP_NOW = /\b(i need (some )?help( right)?( now)?|help me( right)?( now)?|(please )?call (for )?help( right)?( now)?|send help( now)?|get help( now)?)\s*(please|astra)?[\s.!]*$/i;
 const SOS_NOT = /\b(don'?t|do not|never|no need to|not going to|shouldn'?t)\b/i;
 const SOS_ABOUT = /^\s*(what|how|when|why|where|should|would|could|if|in case|do i|does|is it|tell me|explain)\b|\bwhat (if|do i do|should i do)\b|\b(in|during) an emergency\b/i;
 export const isEmergencyPhrase = (t) => {

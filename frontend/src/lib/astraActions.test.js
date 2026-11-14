@@ -175,3 +175,18 @@ describe("inside / outside (EVA)", () => {
     expect(put).toHaveBeenCalledWith("/astronauts/2/location", { location: "eva" });
   });
 });
+
+describe("voice SOS phrases (act like the SOS button)", () => {
+  it("hears 'emergency call now', 'I need help' and friends", () => {
+    for (const t of [
+      "emergency call now", "Emergency call now!", "Astra emergency call now", "I need help", "Astra I need help", "I need help now",
+      "I need help please", "help me", "help me now", "call an emergency", "call emergency now", "SOS", "mayday", "send help",
+    ]) expect(isEmergencyPhrase(t), t).toBe(true);
+  });
+  it("not questions about it or help with something", () => {
+    for (const t of [
+      "how do I make an emergency call?", "what is an emergency call", "I need help with my sleep log", "I need help understanding my trends",
+      "I don't need help", "help", "what if I need help", "can you help me log my mood",
+    ]) expect(isEmergencyPhrase(t), t).toBe(false);
+  });
+});

@@ -220,3 +220,37 @@ describe("the wake callback", () => {
     expect(got).toEqual([{ question: "how am I doing", heard: "astra how am I doing" }]);
   });
 });
+
+describe("voice SOS without her name", () => {
+  const setup = () => {
+    let rec = null;
+    const sos = [], wakes = [];
+    class FakeRec { constructor() { rec = this; } start() {} abort() {} }
+    const l = createWakeListener({
+      Recognition: FakeRec, schedule: () => 1, unschedule: () => {}, every: () => 1, unevery: () => {},
+      onWake: (w) => wakes.push(w), onEmergency: (e) => sos.push(e),
+      isEmergency: (t) => /^(emergency call now|i need help)$/i.test(String(t || "").trim()),
+    });
+    l.start();
+    const say = (transcript, isFinal = true, i = 0) => { const r = [{ transcript }]; r.isFinal = isFinal; rec.onresult({ resultIndex: i, results: Object.assign([], { [i]: r, length: i + 1 }) }); };
+    return { sos, wakes, say };
+  };
+  it("a finished 'emergency call now' acts like the SOS button", () => {
+    const h = setup();
+    h.say("emergency call now");
+    expect(h.sos).toEqual([{ heard: "emergency call now" }]);
+    expect(h.wakes).toEqual([]);
+  });
+  it("never on an unfinished phrase (it may go on: 'I need help... with my sleep log')", () => {
+    const h = setup();
+    h.say("I need help", false);
+    expect(h.sos).toEqual([]);
+    h.say("I need help with my sleep log", true);
+    expect(h.sos).toEqual([]);
+  });
+  it("each phrase fires once", () => {
+    const h = setup();
+    h.say("I need help"); h.say("I need help");
+    expect(h.sos).toHaveLength(1);
+  });
+});
