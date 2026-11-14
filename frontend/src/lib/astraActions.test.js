@@ -8,7 +8,7 @@ vi.mock("./api.js", () => ({
 }));
 import { del, post } from "./api.js";
 import {
-  describeAction, doneSentence, isCancelEmergencyRequest, isCancelPhrase, isEmergencyPhrase, isNo, isYes, PAGES, prepareActions, runActions,
+  describeAction, doneSentence, isCancelEmergencyRequest, isCancelPhrase, isEmergencyPhrase, isNo, isYes, PAGES, prepareActions, runActions, soundsLikeDistress,
 } from "./astraActions.js";
 
 const ALL = [
@@ -126,6 +126,18 @@ describe("Astra's newer abilities", () => {
   it("hears a real call for help, not a question about emergencies", () => {
     for (const t of ["I need help now", "mayday mayday", "I can't breathe", "this is an emergency"]) expect(isEmergencyPhrase(t)).toBe(true);
     for (const t of ["what do I do in an emergency?", "can you help me log my mood", "help"]) expect(isEmergencyPhrase(t)).toBe(false);
+  });
+  it("starts an SOS only for a real call for help, not a mention of one", () => {
+    for (const t of ["Astra I need help now", "help me now", "please call for help", "I need help right now please", "send help", "I can't breathe, help"])
+      expect(isEmergencyPhrase(t), t).toBe(true);
+    for (const t of [
+      "can you help me now with my sleep log", "should I call for help?", "don't call for help", "what if I can't breathe",
+      "when should I call for help", "I don't need help now", "or I can call for help if it gets worse, just tell me",
+    ]) expect(isEmergencyPhrase(t), t).toBe(false);
+  });
+  it("only lets the AI raise an SOS when the astronaut sounds in trouble", () => {
+    for (const t of ["I need help", "my chest hurts", "I can't breathe", "there's smoke in the module"]) expect(soundsLikeDistress(t), t).toBe(true);
+    for (const t of ["what do you think about our project", "how am I doing", "log my sleep"]) expect(soundsLikeDistress(t), t).toBe(false);
     for (const t of ["cancel", "no I'm okay", "false alarm", "stop"]) expect(isCancelPhrase(t)).toBe(true);
   });
 });

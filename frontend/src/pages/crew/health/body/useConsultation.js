@@ -19,7 +19,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../../../../lib/api.js";
 import {
   ACTIVITIES, doneSentence, IMMEDIATE, isCancelEmergencyRequest, isCancelPhrase, isEmergencyPhrase, isNo, isYes, PAGES, prepareActions, runActions,
+  soundsLikeDistress,
 } from "../../../../lib/astraActions.js";
+import { localAnswer } from "../../../../lib/astraIntents.js";
 import { emergencyStore } from "../../../../lib/socket.js";
 import { REGION_KEYWORDS } from "../../../../three/anatomy/regions.js";
 
@@ -215,6 +217,15 @@ export function useConsultation({ astroId, content, mission, persistDiscomfort, 
       return { text: reply };
     }
 
+    // "What do you think about our project?" / "what can you do?": answered at once, no AI
+    // (lib/astraIntents.js) -- so they work even when the free AI plan is out of quota.
+    const local = localAnswer(text, content);
+    if (local) {
+      add({ who: "assistant", text: local.text });
+      remember(text, local.text);
+      return { text: local.text };
+    }
+
     const pendingBubble = add({ who: "assistant", text: "Thinking…", pending: true });
     setThinking(true);
     let result;
@@ -225,7 +236,15 @@ export function useConsultation({ astroId, content, mission, persistDiscomfort, 
       result = { ...quickReply(text), source: { kind: "quick" }, actions: [] };
     }
     const nav = result.actions.find((a) => a.type === "navigate");
-    const sos = result.actions.find((a) => a.type === "emergency");
+    // An SOS the AI proposes only counts if the astronaut actually sounds in trouble; otherwise
+    // it becomes an "alert the flight surgeon?" card (asked yes/no), never a surprise SOS.
+    let sos = result.actions.find((a) => a.type === "emergency");
+    if (sos && !soundsLikeDistress(text)) {
+      console.info(`[astra] the AI proposed an SOS for "${text}"; asking about an alert instead`);
+      result.actions = result.actions.map((a) => (a === sos ? { type: "alert_surgeon", text: sos.text } : a));
+      result.text = "It sounds like something may be wrong. Should I alert the flight surgeon?"; // her reply said she was calling for help
+      sos = null;
+    }
     const now_ = result.actions.filter((a) => IMMEDIATE.includes(a.type)); // notes: no yes needed
     if (now_.length) runActions(now_, { astroId });
     // A guided activity starts at once (it saves nothing until the end, and has a Stop).

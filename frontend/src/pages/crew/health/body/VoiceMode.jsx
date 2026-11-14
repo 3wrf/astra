@@ -26,6 +26,7 @@ import { emergencyStore, useStore } from "../../../../lib/socket.js";
 import { duckAlarm } from "../../../../lib/alarm.js";
 
 const WORD = { listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" };
+const TAIL_ECHO_MS = 2500; // the mic can still hear the end of her sentence this long after she stops
 
 // Mounted only while open (by AstraProvider), so every call starts fresh.
 // initialQuestion: what was said right after "Astra" ("Astra, how am I doing?") -- answered
@@ -98,6 +99,7 @@ export function VoiceMode({
 
   const turnRef = useRef(0); // bumps on every new turn or interruption; stale turns stop
   const cutInRef = useRef(false); // you just talked over her (the words may finish after she stopped)
+  const spokeRef = useRef({ text: "", endedAt: 0 }); // her last sentence and when she finished it
   const cancelSosRef = useRef(null);
 
   const listenAgain = useCallback((delay = 250) => {
@@ -171,6 +173,15 @@ export function VoiceMode({
     // by the time the finished sentence arrives here.
     const notUsed = (why) => { if (toneMode) console.info(`[astra] voice tone: heard a phrase but didn't use it (${why})`); };
     if (voiceState.speaking && isEcho(text, voiceRef.current?.currentText())) { notUsed("Astra's own voice"); listenAgain(100); return; } // her own voice
+    // The END of her own sentence, heard just after she stopped (laptop speakers): not you.
+    // Without this, "...or I can call for help" coming back through the mic set off an SOS.
+    const last = spokeRef.current;
+    if (!voiceState.speaking && last.endedAt && Date.now() - last.endedAt < TAIL_ECHO_MS && isEcho(text, last.text)) {
+      console.info(`[astra] ignored "${text}": the end of my own voice`);
+      notUsed("the end of Astra's own voice");
+      listenAgain(100);
+      return;
+    }
     // Too quiet or too unclear to be the astronaut (someone across the room, a video, noise
     // turned into words): ignore it and keep listening (lib/hearing.js, the "Room" setting).
     const since = meta.startedAt ? Date.now() - meta.startedAt + 400 : 6000;
@@ -227,6 +238,11 @@ export function VoiceMode({
     onInterim, onFinal, onNoSpeech: () => listenAgain(200),
   });
   useEffect(() => { voiceRef.current = voice; });
+  // What she said last and when she stopped (for the tail-echo check in onFinal).
+  useEffect(() => {
+    if (voice.speaking) spokeRef.current = { text: voiceRef.current?.currentText() || "", endedAt: 0 };
+    else if (spokeRef.current.text && !spokeRef.current.endedAt) spokeRef.current.endedAt = Date.now();
+  }, [voice.speaking]);
   const { startListening, abortListening, cancel, settings } = voice;
   // Said by a guided activity (each step); also shown as a caption.
   const sayLine = useCallback(async (text) => {

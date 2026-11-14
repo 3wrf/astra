@@ -134,7 +134,22 @@ export const isYes = (t) => short(t) && !isNo(t)
   && /^\s*(yes|yeah|yep|yup|sure|ok|okay|do it|save( it)?|go ahead|confirm(ed)?|correct|please( do)?|absolutely|right|that'?s right)\b/i.test(t);
 
 // "Astra, I need help" -- even when the AI can't be reached.
-export const isEmergencyPhrase = (t) => /\b(mayday|i need help (right )?now|help me now|this is an emergency|it'?s an emergency|i can'?t breathe|i cannot breathe|call for help|call help now)\b/i.test(String(t || ""));
+// Strict on purpose: this starts the SOS countdown WITHOUT asking the AI, so a phrase that only
+// mentions help or emergencies must not trigger it ("can you help me now with my sleep log",
+// "should I call for help?", "what do I do in an emergency?", "don't call for help").
+const SOS_STRONG = /\b(mayday|this is an emergency|it'?s an emergency|we have an emergency|i can'?t breathe|i cannot breathe)\b/i;
+// "help now" phrases count only as the whole request (at the end), not inside a longer question.
+const SOS_HELP_NOW = /\b(i need help (right )?now|help me (right )?now|(please )?call (for )?help( right)?( now)?|send help( now)?)\s*(please|astra)?[\s.!]*$/i;
+const SOS_NOT = /\b(don'?t|do not|never|no need to|not going to|shouldn'?t)\b/i;
+const SOS_ABOUT = /^\s*(what|how|when|why|where|should|would|could|if|in case|do i|does|is it|tell me|explain)\b|\bwhat (if|do i do|should i do)\b|\b(in|during) an emergency\b/i;
+export const isEmergencyPhrase = (t) => {
+  const s = String(t || "");
+  if (SOS_NOT.test(s) || SOS_ABOUT.test(s)) return false;
+  return SOS_STRONG.test(s) || SOS_HELP_NOW.test(s);
+};
+// For an "emergency" the AI itself proposes: only when the astronaut sounds in real trouble.
+// Otherwise it becomes a normal "alert the flight surgeon?" card instead of an SOS.
+export const soundsLikeDistress = (t) => /\b(help|emergency|mayday|breath|breathe|chest|bleed|bleeding|faint|pass(ed|ing)? out|unconscious|collaps|fire|smoke|leak|pressure|choking|seizure|can'?t move|injur|hurt|pain|dizzy|scared|terrified)\b/i.test(String(t || ""));
 export const isCancelPhrase = (t) => /\b(cancel|stop|no|don'?t|false alarm|i'?m (ok|okay|fine)|never ?mind|abort)\b/i.test(String(t || ""));
 
 // While a REAL emergency is on (the red screen and the alarm), "Astra, cancel the emergency".
