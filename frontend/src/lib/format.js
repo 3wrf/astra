@@ -51,12 +51,20 @@ export const INDICATORS = {
   blood_sugar: { label: "Blood sugar", unit: "mg/dL" },
   temperature: { label: "Temperature", unit: "°C" },
   oxygen_saturation: { label: "Blood oxygen", unit: "%" },
+  // From the live wearable (a replayed real crew recording -- backend/logic/sensor_feed.py).
+  respiration_rate: { label: "Breathing rate", unit: "/min" },
+  stress: { label: "Stress", unit: "/100" },
   sleep: { label: "Sleep", unit: "" },
   mood: { label: "Mood", unit: "" },
   exercise: { label: "Exercise", unit: "min" },
   water: { label: "Water", unit: "ml" },
   reaction_time: { label: "Reaction time", unit: "" },
+  // Spacewalk suit sensors -- only shown and counted while the astronaut is outside (EVA).
+  suit_co2: { label: "Suit CO2", unit: "mmHg" },
+  suit_pressure: { label: "Suit pressure", unit: "psi" },
+  suit_o2: { label: "Oxygen supply", unit: "%" },
 };
+export const SUIT_INDICATORS = ["suit_co2", "suit_pressure", "suit_o2"];
 
 export function fmtTime(iso) {
   if (!iso) return "never";

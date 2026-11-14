@@ -8,14 +8,15 @@ import { rise } from "./ui/motion.js";
 
 export const TILE_ICON = {
   heart_rate: "heart", blood_pressure: "blood-pressure", blood_sugar: "blood-sugar", temperature: "temperature",
-  oxygen_saturation: "lungs", sleep: "sleep", mood: "mood", reaction_time: "mind", exercise: "sun", water: "blood-sugar",
+  oxygen_saturation: "lungs", respiration_rate: "lungs", stress: "mind", sleep: "sleep", mood: "mood", reaction_time: "mind", exercise: "sun", water: "blood-sugar",
+  suit_co2: "lungs", suit_pressure: "temperature", suit_o2: "lungs",
 };
 
 const EDGE = { GREEN: "border-t-good-edge", YELLOW: "border-t-check-edge", RED: "border-t-alert-edge", GRAY: "border-t-line" };
 
 function Metric({ indicator, value }) {
   if (value == null) return <span>–</span>;
-  if (indicator === "heart_rate" || indicator === "blood_sugar" || indicator === "oxygen_saturation" || indicator === "exercise" || indicator === "water") {
+  if (indicator === "heart_rate" || indicator === "blood_sugar" || indicator === "oxygen_saturation" || indicator === "exercise" || indicator === "water" || indicator.startsWith("suit_")) {
     return <AnimatedNumber value={Number(value)} />;
   }
   if (indicator === "temperature") return <AnimatedNumber value={Number(value)} decimals={1} />;
@@ -29,7 +30,6 @@ export function VitalTile({ indicator, reading, className = "", children }) {
   return (
     <motion.div
       variants={rise}
-      whileHover={{ y: -3, transition: { duration: 0.2 } }}
       className={cx("flex flex-col gap-2.5 ah-glass rounded-card-s border-t-[3px] p-4 transition-colors duration-500", EDGE[level], className)}
     >
       <div className="flex min-w-0 items-center gap-2 text-sm text-ink-2">
@@ -39,7 +39,7 @@ export function VitalTile({ indicator, reading, className = "", children }) {
         <span className="truncate" title={meta.label}>{meta.label}</span>
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className="font-display text-[30px] leading-[1.05] font-bold tracking-[-0.02em]">
+        <span className="font-display text-display leading-[1.05] font-bold tracking-[-0.02em]">
           <Metric indicator={indicator} value={reading?.value} />
         </span>
         {showUnit && <span className="text-sm text-muted">{meta.unit}</span>}

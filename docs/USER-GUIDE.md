@@ -1,5 +1,3 @@
-<!-- The original, detailed feature and operations guide. The project overview and install steps are in the root README.md. -->
-
 # Astro Health Station
 
 A NASA Space Apps hackathon demo: a tool that helps astronauts check their own health during
@@ -70,9 +68,20 @@ no reflash needed). That idle timeout never signs the browser out.
 
 ### What's in the app
 
-- **Crew:** Overview, Astra & body (3D anatomy twin, plus a Astra chat you can type or talk to),
-  Trends, Mind & mood, Sleep lab, Mission health, Schedule (live mission clock), Learn, and a
-  thread with the Flight Surgeon on the Overview.
+- **Crew**, in four sections:
+  - **Overview**: the home dashboard, with today's check-ins at a glance and the thread with
+    the Flight Surgeon.
+  - **Daily check-ins**, what the astronaut must do every day:
+    - **Today**: the routine on the mission clock. The sidebar badge counts tasks due now.
+      Workouts and sleep tracking start and stop right there, and the other tasks link to
+      where they're done.
+    - **Mind & mood**
+    - **Sleep lab**
+
+    A **Face check** card (every 2 hours, reading your expression for tiredness or stress)
+    is shown as *Coming soon*.
+  - **Health**: Astra & body (3D anatomy twin plus the Astra chat), Trends.
+  - **Mission**: Mission health.
 - **Flight Surgeon:** Crew overview, Alerts (acknowledge), each crew member's profile (with
   delayed replies), plus every crew page for whichever crew member is picked. The **tools**
   button (wrench) renames crew members, exports CSVs and resets the demo data.
@@ -230,13 +239,32 @@ Talk or type to Astra (crew only):
 - The Flight Surgeon can still ask about a crew member, but Astra never saves anything on
   their behalf.
 
+### Inside or outside: spacewalk (EVA) mode
+
+Next to the Astra pill in the top bar, the **Location** pill shows **Inside**, or **EVA · 12
+min** while you're outside. Click it when you go out on a spacewalk and again when you're
+back. It asks **"Are you sure?"** first (Cancel or Esc changes nothing). You can also tell
+Astra "I'm heading out for my spacewalk".
+
+**While outside:**
+- Three suit readings join your readings and come first on Overview: **Suit CO2** (mmHg),
+  **Suit pressure** (psi) and **Oxygen supply** (%). Their ranges are PLACEHOLDER figures.
+- "Use simulated vitals" fills them from the suit sensors.
+- **Simulate suit problem** fills high CO2 and low pressure, for the demo.
+- The AI health analyst treats the suit readings as life-critical. A red one makes it say
+  you're unwell, tell you to head back to the airlock, and alert the flight surgeon. Astra's
+  health warning speaks up too.
+- The Flight Surgeon sees **On EVA** on your crew card and your Location pill (read-only).
+
+**Back inside**, suit readings stop counting, so an old red CO2 reading can't keep you red.
+
 ### Astra speaks first
 
 Without being asked, Astra says (or shows in a small card at the bottom right):
 
 - **Health warnings**: when your health analysis gets worse (yellow or red), at most once
   every 10 minutes. She offers to alert the flight surgeon, or says she already did.
-- **Schedule**: "It's 08:00: exercise block. Should I start tracking your workout?", and
+- **Today's routine**: "It's 08:00: exercise block. Should I start tracking your workout?", and
   "You missed the morning vitals check…" when a task is missed.
 - **The flight surgeon**: she reads their messages to you (and you can answer by voice),
   and tells you when they've seen your alert, after the comms delay.
@@ -253,6 +281,53 @@ offered. She speaks out loud only when all of these are true:
 
 She speaks out loud at most once a minute. A superuser sets **Astra speaks first** on
 `/admin` → Station voice: **Out loud**, **Card only** or **Off**.
+
+### "Wanna talk?" and voice tone estimates (optional)
+
+On **Mind & mood**, **Wanna talk?** → **Talk to Astra** opens her usual voice screen for a
+short, hands-free chat. During that chat only, each phrase you say also gets a **voice tone
+estimate** (angry, calm, disgust, fearful, happy, sad or surprised), from a Wav2Vec2 model
+running on this laptop. The estimates appear afterwards in the **Voice tone · estimate** card on
+the same page. Nothing is shown during the call, and Astra's AI is never told.
+
+- **An estimate, not a diagnosis.** It guesses from how the voice *sounds*, and the model was
+  trained on acted speech. It doesn't detect stress, fatigue or any condition, and it never
+  feeds the health analysis, alerts, levels or your mood.
+- **Kept apart from your mood.** Self-reported mood stays exactly as it was (`readings`).
+  Estimates have their own table (`voice_tone`) and their own card.
+- **Two different audio paths:**
+  - *Voice tone (local):* each phrase is recorded from Astra's shared microphone, sent as a
+    16 kHz WAV to this laptop's own backend, analysed in memory and thrown away. Only the
+    scores are saved, and nothing goes to an outside service.
+  - *Speech-to-text (not local):* the words themselves still go through the browser's speech
+    recognition, as for every Astra call. Chrome sends that audio to Google, Edge to Microsoft.
+- **Who sees it:** the astronaut and the flight surgeon (like the journal). Only the astronaut
+  can record.
+- **Optional install** (about 1.5 GB on disk; the app works without it):
+
+  ```bash
+  .venv/bin/python -m pip install -r requirements-emotion.txt   # torch (CPU-only) + transformers
+  .venv/bin/python -m backend.services.emotion download          # the model, ~378 MB, SHA-256 checked
+  ```
+
+  The model is `Dpngtm/wav2vec2-emotion-recognition` (MIT), pinned to one revision and stored
+  in `models/wav2vec2-emotion/` (gitignored). It loads in the background when `app.py` starts
+  (about 3 s and about 500 MB of RAM) and never goes online at runtime. Without it, the talk
+  works the same and the card says estimates aren't set up. `ASTRO_NO_EMOTION=1` turns it off.
+- **Speed:** on an Intel Core 7 240H with 4 threads, about 0.25 s for a 5 s phrase and 0.8 s
+  for 15 s. `python -m backend.services.emotion bench` measures your machine, and
+  `... predict file.wav` checks one recording.
+- **Browser test** (dev only, never against your live app): `cd frontend && node scripts/e2e-wanna-talk.mjs --base http://localhost:5057`
+  against an isolated copy. The steps are at the top of that file.
+- **Latest Conversation Analysis** (Mind page, below the voice tone card): the result of your
+  last finished talk only. It shows the dominant tone and its share, all seven probabilities
+  (the average over that talk's analysed phrases) and how many phrases were analysed. It says
+  "Analysing…" while the last phrases are still being processed, and survives a reload.
+- **How your speech is found:** from the audio itself, measured against your mic's own
+  background level, with Astra's actual playback (and anything said over it) left out. The
+  speech recognizer's timing is only used to know which seconds belong to a phrase. Very
+  short replies ("yes") are skipped rather than guessed at. Open DevTools → Console and filter
+  `voice tone` to see, per phrase and in numbers only, what was kept and why.
 
 ### Superuser admin page
 
@@ -291,7 +366,7 @@ First run creates the database (`data/astro.db`, git-ignored) with the real crew
 UIDs are in `backend/seed.py`) plus a Flight Surgeon. New cards are assigned in `/admin`.
 
 The app runs on a sped-up **mission clock** (`ASTRO_TIME_SCALE`, default 60: one real minute
-is one mission hour). Comms delays, reminders and the Schedule page all use it, and it starts
+is one mission hour). Comms delays, reminders and the Today page all use it, and it starts
 at 00:00 each time the server starts.
 
 ### Running the CYD on a power bank (no laptop cable)
@@ -324,7 +399,8 @@ Works the same with the real hardware or in `--simulate` mode.
 6. In the profile's **Messages**, reply. Switch the mission to **Mars transit** first (top bar
    → Mission chip → Mars transit) to watch the reply count down before it reaches Ahmad, then log back in as
    Ahmad to see it arrive.
-7. **Schedule**: the mission clock, with tasks ticked off from what was actually logged.
+7. **Today** (Daily check-ins): the mission clock, with tasks ticked off from what was
+   actually logged. Press **Start workout**, then **Stop workout**.
 8. Simulator → **Emergency card**. Every open screen shows the red overlay, signed in or not.
    Cancel it on the overlay (or hold the CYD's corner SOS button 3 s on hardware).
 
@@ -333,7 +409,7 @@ Works the same with the real hardware or in `--simulate` mode.
 - Thresholds: `config/health_rules.json` (every indicator's GREEN/YELLOW/RED ranges).
   Vitals: heart rate, blood pressure, blood sugar, temperature and blood oxygen (SpO2,
   placeholder bands: 95%+ good, 90-94% check, below 90% alert).
-- Plain-language text (hazards, body parts, measurement guides, Learn cards): `config/content.json`.
+- Plain-language text (hazards, body parts, measurement guides): `config/content.json`.
 - Mission profiles and comms delays: `config/missions.json`; per-mission body risks and
   checks: `config/mission_health.json`.
 - Daily schedule: `config/routine.json`.
@@ -342,6 +418,12 @@ Works the same with the real hardware or in `--simulate` mode.
   Surgeon's tools menu.
 - To start over with fresh demo data: Flight Surgeon tools → **Reset demo data** (asks you to
   type RESET; superuser accounts are kept), or `.venv/bin/python -m backend.seed`.
+- **Live monitor (Overview → "Start live monitor")** replays a *real* recorded crew session: a
+  moving ECG, heart rate, breathing rate and a relative stress level (skin response), with the
+  recorded startle moments flagged. Source: NASA's crew-state physiology study (Kaggle
+  "Reducing Commercial Aviation Fatalities"), crew 13. Only a small per-second summary is in
+  the repo (`backend/sensor/crew13.json`). To rebuild it from the original zip:
+  `.venv/bin/python -m backend.sensor.build ~/Downloads/13.zip`
 
 ## Testing
 

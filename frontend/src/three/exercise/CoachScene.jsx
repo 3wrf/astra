@@ -11,7 +11,7 @@ const EDGE_FADE = {
 
 export default function CoachScene({ exercise, playing = true, restartKey = 0, onStep }) {
   const canvasRef = useRef(null), overlayRef = useRef(null), coachRef = useRef(null), stepRef = useRef(onStep);
-  stepRef.current = onStep;
+  useEffect(() => { stepRef.current = onStep; }); // latest callback, without remounting the scene
 
   useEffect(() => {
     const coach = mountCoach(canvasRef.current, overlayRef.current, { onStep: (s) => stepRef.current?.(s) });

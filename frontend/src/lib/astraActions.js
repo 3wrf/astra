@@ -3,7 +3,7 @@
 // file turns them into words for the confirm card / her voice, understands the spoken or
 // typed "yes"/"no", and saves through the app's normal routes -- the same ones the forms
 // use, so everything downstream (Socket.IO updates, the AI health analysis) just works.
-import { del, get, post } from "./api.js";
+import { del, get, post, put } from "./api.js";
 
 export const PAGES = {
   overview: { path: "/", label: "Overview" },
@@ -11,9 +11,9 @@ export const PAGES = {
   trends: { path: "/trends", label: "Trends" },
   mind: { path: "/mind", label: "Mind & mood" },
   sleep: { path: "/sleep", label: "Sleep lab" },
-  mission: { path: "/mission", label: "Mission health" },
-  schedule: { path: "/schedule", label: "Schedule" },
-  learn: { path: "/learn", label: "Learn" },
+  mission: { path: "/mission", label: "Missions" },
+  exercise: { path: "/exercise", label: "Exercises" },
+  schedule: { path: "/today", label: "Today" },
 };
 
 const VITALS = [
@@ -44,6 +44,7 @@ const SUMMARY_LABEL = { today: "today's", week: "this week's" };
 /** One line for the confirm card, e.g. "Log mood: low · note: stressed". */
 export function describeAction(a) {
   switch (a.type) {
+    case "set_location": return a.location === "eva" ? "Switch to EVA mode (outside on a spacewalk)" : "Back inside the station";
     case "message_surgeon": return `Message the flight surgeon: “${a.text}”`;
     case "send_summary": return `Send ${SUMMARY_LABEL[a.period] || "a"} health summary to the flight surgeon`;
     case "start_sleep": return "Start sleep tracking";
@@ -93,6 +94,9 @@ const LEVEL_WORDS = { GREEN: "all good", YELLOW: "worth keeping an eye on", RED:
 function specialSentence({ action: a, ok, data }) {
   if (!ok) return null;
   switch (a.type) {
+    case "set_location": return a.location === "eva"
+      ? "EVA mode is on. I'm watching your suit's CO2, pressure and oxygen. Stay safe out there."
+      : "Welcome back inside. I've stopped watching the suit readings.";
     case "message_surgeon": return `Sent your message to the flight surgeon.${arrives(data)}`;
     case "send_summary": return `I sent ${SUMMARY_LABEL[a.period] || "your"} health summary to the flight surgeon.${arrives(data)}`;
     case "alert_surgeon": return `I alerted the flight surgeon.${arrives(data)}`;
@@ -168,6 +172,7 @@ export async function runAction(a, { astroId, persistDiscomfort }) {
   const base = `/astronauts/${astroId}`;
   const activity = (kind, action) => post(`${base}/activity`, { kind, action });
   switch (a.type) {
+    case "set_location": return put(`${base}/location`, { location: a.location });
     case "message_surgeon": return post(`${base}/message`, { text: a.text });
     case "send_summary": return post(`${base}/summary-report`, { period: a.period });
     case "start_sleep": return activity("sleep", "start");

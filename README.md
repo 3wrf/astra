@@ -61,17 +61,20 @@ ASTRA turns a laptop, a pocket-sized touchscreen and an NFC reader into a **heal
 - **AI health analysis:** an AI looks at all of the astronaut's data together and decides what is going on (*doing well, sleeping, exercising, fatigued, stressed, possibly sick, unwell, emergency…*), explains why, says what to do, and alerts the flight surgeon when needed. If there is no internet, the station falls back to its own threshold rules, so it never stops working.
 - **3D digital twin:** a realistic, clickable anatomy model (skeleton, muscles, organs) coloured by the astronaut's current levels. Tap a body part to learn what it does, how spaceflight affects it, and what to do.
 - **Astra, the voice assistant:** say *"Astra"* on any page and talk hands-free, like a phone call. She answers from the astronaut's own data, can **open pages, log mood, sleep, symptoms, pain and vitals (always after a yes/no check), message the flight surgeon, run guided breathing and reaction tests, call for help ("I need help now", with a 5-second cancel window) and cancel an emergency by voice**. She also speaks first: health warnings, schedule reminders, messages from Earth and a daily briefing.
-- **Trends, Sleep lab, Mind & mood, Exercise (ISS-style T2 treadmill, CEVIS cycle, ARED resistance with a 3D coach), Schedule on a live mission clock, and Learn cards.**
+- **Live wearable monitor:** replays a **real NASA crew-state physiology recording** (heart rate from ECG, breathing rate, a relative stress level) as if from a wearable, with a moving ECG trace. One play-through becomes the day's vitals check.
+- **Mind & mood:** a short **daily AI mood check** by voice or text, plus optional **on-device** wellbeing observations: **Face Analysis** (MediaPipe face landmarks, e.g. eye closure), **Pose Analysis** (posture) and **"Wanna talk?"** (voice-tone estimates from a local Wav2Vec2 model). All of it runs on the laptop; no video or audio leaves the station.
+- **Spacewalk (EVA) mode:** switch an astronaut to "outside" and the live EVA is compared with **368 real spacewalks** from NASA's EVA log (typical length, the record), with real suit incidents from the log shown next to matching suit readings.
+- **Trends, Sleep lab, Exercise (ISS-style T2 treadmill, CEVIS cycle, ARED resistance with a 3D coach), Schedule on a live mission clock, and Learn cards.**
 - **Mission health:** pick one of five real missions (ISS Crew-13, the NASA Twins Study, Artemis II, Mars-520 and spacewalks/EVA) and see how each one stresses each body system, next to the astronaut's live levels, with a monitoring checklist and the NASA/ESA sources behind it.
 
 **For the Flight Surgeon / Crew Medical Officer**
 
-- A teal **medical console**: crew overview sorted by who needs attention first, an **alert inbox** with acknowledge, each astronaut's full profile, and CSV export.
+- A teal **medical console**: crew overview sorted by who needs attention first, an **alert inbox** with acknowledge, each astronaut's full profile, and **crew records** (filter every astronaut's daily data and export a formatted **Excel** file, or CSV).
 - **Real communication delay:** messages between the crew and Earth wait for the mission's comms delay (from ~0 s in low Earth orbit up to ~20 min on a Mars transit), with a visible countdown. While Earth can't answer yet, the crew gets a self-care checklist.
 
 **For everyone on board**
 
-- **Emergency mode:** started from the device's SOS button, an emergency NFC card, the web app or Astra. Every screen shows a full-screen red alert with a checklist, the device flashes red and beeps, and a report goes to the flight surgeon.
+- **Emergency mode:** started from the device's SOS button, an emergency NFC card, the web app or Astra. Every screen shows a full-screen red alert with a checklist, the device flashes red and beeps, an alarm sounds on the flight surgeon's console, and a report goes to the flight surgeon. It can be cancelled with a button or by voice ("Astra, cancel the emergency" → "yes").
 - A **crew-wide status board** for a shared station display, showing counts only and never names or individual readings.
 
 ---
@@ -145,13 +148,14 @@ flowchart LR
 | Area | What we used |
 |---|---|
 | **Languages** | Python, JavaScript (React/JSX), C++ (Arduino), HTML/CSS, JSON |
-| **Backend** | Flask 3, Flask-SocketIO (threading mode), SQLite, pyserial, Werkzeug password hashing |
+| **Backend** | Flask 3, Flask-SocketIO (threading mode), SQLite, pyserial, Werkzeug password hashing, NumPy, XlsxWriter (Excel export) |
+| **On-device analysis (optional)** | MediaPipe Tasks (Face Landmarker, Pose Landmarker), OpenCV, PyTorch (CPU) + Hugging Face Transformers (Wav2Vec2 voice-tone model) |
 | **Frontend** | React 19, Vite, React Router, TanStack Query, Tailwind CSS v4, Motion, d3 scales (hand-built SVG charts), Three.js + React Three Fiber/Drei (3D) |
 | **AI and voice** | Groq API (`openai/gpt-oss-120b`, OpenAI-compatible) for health analysis and Astra's chat; browser Web Speech API for speech recognition and the offline voice; Microsoft Edge neural voices via `edge-tts`; Web Audio for station effects (Quindar tones, echo, radio) |
 | **Face ID** | face-api.js (runs in the browser; the server makes the identity decision) |
 | **Firmware** | Arduino C++ with TFT_eSPI, XPT2046_Touchscreen, ArduinoJson 7, Adafruit_PN532; `arduino-cli` |
 | **Hardware** | CYD *Cheap Yellow Display* ESP32-2432S028R (2.8″ touchscreen, RGB LED, speaker), Raspberry Pi Pico (RP2040) + PN532 NFC module, NFC cards and tags, any laptop |
-| **Testing** | pytest (279 backend tests), Vitest (97 frontend tests), ESLint, headless Chromium end-to-end checks |
+| **Testing** | pytest (360+ backend tests), Vitest (214 frontend tests), ESLint, headless Chromium end-to-end checks (Playwright) |
 | **3D asset pipeline** | gltf-transform + meshoptimizer (anatomy model conversion) |
 
 ---
@@ -163,7 +167,9 @@ We used AI tools both **to build** the project and **inside** the product:
 | Tool | Where and how |
 |---|---|
 | **Claude Code (Anthropic)** | Coding assistant during development: writing and refactoring backend, frontend and firmware code, tests, debugging, and documentation (including this README). Every change was reviewed and tested by the team. |
-| **Groq-hosted `openai/gpt-oss-120b`** | **Inside the app at runtime:** the AI health analyst and Astra's conversation. Its answers are validated by the server; the threshold rules take over when it isn't available. |
+| **Groq-hosted `openai/gpt-oss-120b`** (with smaller Groq models as fallbacks) | **Inside the app at runtime:** the AI health analyst, Astra's conversation and the daily mood check. Its answers are validated by the server; the threshold rules take over when it isn't available. |
+| **MediaPipe Face Landmarker and Pose Landmarker (Google, pre-trained)** | Optional on-device Face Analysis and Pose Analysis on the Mind page. |
+| **Wav2Vec2 voice-emotion model** ([`Dpngtm/wav2vec2-emotion-recognition`](https://huggingface.co/Dpngtm/wav2vec2-emotion-recognition), Hugging Face) | Optional on-device voice-tone estimates in "Wanna talk?". The team's dataset research and CPU training study are in `data/training/reports/`. |
 | **Microsoft Edge neural text-to-speech (`edge-tts`)** | Astra's optional neural voice, and the narration of our demo videos. |
 | **Browser speech recognition (Web Speech API)** | Turns the astronaut's voice into text (Chrome/Edge). |
 | **face-api.js (pre-trained face-recognition models)** | Optional Face ID sign-in. |
@@ -182,7 +188,9 @@ We used AI tools both **to build** the project and **inside** the product:
 | [Artemis II mission](https://www.nasa.gov/mission/artemis-ii/) · [Artemis II crew as research subjects](https://www.nasa.gov/general/artemis-ii-crew-both-subjects-and-scientists-in-nasa-deep-space-research) | "Artemis II" mission profile |
 | [NASA SpaceX Crew-13 to the ISS](https://www.nasa.gov/news-release/NASAs-spacex-crew-13-launches-to-international-space-station/) | "Crew-13 · ISS" mission profile |
 | [Epigenetic patterns during the Mars 520-day mission simulation (data.nasa.gov)](https://data.nasa.gov/dataset/dynamic-nature-of-epigenetic-patterns-observed-during-the-mars-520-d-mission-simulation) | "Mars-520" mission profile |
-| [Risk of injury from EVA](https://nasa.gov/reference/risk-of-injury-and-compromised-performance-from-extravehicular-activity-eva) · [EVA Injury Evidence Report 2021 (NTRS)](https://ntrs.nasa.gov/api/citations/20220004017/downloads/2021%20EVA%20Injury%20Evidence%20Report%20Final.docx.pdf) · [EVA – US and Russia dataset (data.nasa.gov)](https://data.nasa.gov/dataset/extra-vehicular-activity-eva-us-and-russia) | "Spacewalks (EVA)" mission profile |
+| [Risk of injury from EVA](https://nasa.gov/reference/risk-of-injury-and-compromised-performance-from-extravehicular-activity-eva) · [EVA Injury Evidence Report 2021 (NTRS)](https://ntrs.nasa.gov/api/citations/20220004017/downloads/2021%20EVA%20Injury%20Evidence%20Report%20Final.docx.pdf) | "Spacewalks (EVA)" mission profile |
+| [Extra-vehicular Activity (EVA) – US and Russia (data.nasa.gov)](https://data.nasa.gov/dataset/extra-vehicular-activity-eva-us-and-russia) | **Real spacewalk history** (`backend/eva/nasa_eva.csv`, 375 spacewalks 1965–2013): the live EVA is compared with 368 completed spacewalks, and real suit incidents are shown and given to the AI as context |
+| NASA crew-state physiology dataset (ECG, respiration, skin conductance during attention and startle tests), as published for [Kaggle's "Reducing Commercial Aviation Fatalities"](https://www.kaggle.com/c/reducing-commercial-aviation-fatalities) | The **live wearable monitor**: one crew member's recording, reduced to per-second heart rate, breathing and relative stress (`backend/sensor/crew13.json`) |
 | [NASA: Astronaut exercise (ARED, T2, CEVIS)](https://www.nasa.gov/missions/station/iss-research/astronaut-exercise) · [ISS exercise hardware overview (NTRS)](https://ntrs.nasa.gov/api/citations/20130009882/downloads/20130009882.pdf) | The Exercise page and its daily exercise goal |
 | [NASA 3D Resources](https://github.com/nasa/NASA-3D-Resources): International Space Station, Extravehicular Mobility Unit, Habitat Demonstration Unit, Advanced Crew Escape Suit, Moon and Mars textures | 3D mission scenes and the exercise coach |
 | [NASA Blue Marble Next Generation via NASA WorldWind](https://github.com/NASAWorldWind/WebWorldWind) | The Earth globe in the mission scenes |
@@ -201,6 +209,12 @@ We used AI tools both **to build** the project and **inside** the product:
 - Garrett-Bakelman et al., *The NASA Twins Study*, Science 2019: <https://www.science.org/doi/10.1126/science.aau8650>
 - Basner et al., *Mars 520-d mission simulation reveals protracted crew hypokinesis and alterations of sleep duration and timing*, PNAS 2013: <https://pmc.ncbi.nlm.nih.gov/articles/PMC3574912>
 
+**AI models and datasets (optional on-device analysis)**
+
+- [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker) and Pose Landmarker (Google)
+- [`Dpngtm/wav2vec2-emotion-recognition`](https://huggingface.co/Dpngtm/wav2vec2-emotion-recognition) (Hugging Face)
+- [Open and Closed Eyes Dataset](https://huggingface.co/datasets/MichalMlodawski/closed-open-eyes) (ODC-BY), plus the speech datasets listed in [`data/training/reports/SUMMARY.md`](data/training/reports/SUMMARY.md): used for evaluation and training research
+
 **3D models, images, sound and fonts**
 
 - **BodyParts3D**, © The Database Center for Life Science, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): the anatomy meshes of the digital twin (converted to `frontend/public/models/anatomy.glb`; attribution shown in the app)
@@ -211,7 +225,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 **Open-source software** (all used under their own licenses)
 
-- Backend: [Flask](https://flask.palletsprojects.com/), [Flask-SocketIO](https://flask-socketio.readthedocs.io/), [simple-websocket](https://github.com/miguelgrinberg/simple-websocket), [pyserial](https://github.com/pyserial/pyserial), [pytest](https://pytest.org/), [edge-tts](https://github.com/rany2/edge-tts)
+- Backend: [Flask](https://flask.palletsprojects.com/), [Flask-SocketIO](https://flask-socketio.readthedocs.io/), [simple-websocket](https://github.com/miguelgrinberg/simple-websocket), [pyserial](https://github.com/pyserial/pyserial), [pytest](https://pytest.org/), [edge-tts](https://github.com/rany2/edge-tts), [NumPy](https://numpy.org/), [XlsxWriter](https://github.com/jmcnamara/XlsxWriter), and optionally [MediaPipe](https://github.com/google-ai-edge/mediapipe), [OpenCV](https://opencv.org/), [PyTorch](https://pytorch.org/), [Transformers](https://github.com/huggingface/transformers)
 - Frontend: [React](https://react.dev/), [Vite](https://vite.dev/), [Tailwind CSS](https://tailwindcss.com/), [three.js](https://threejs.org/), [React Three Fiber](https://github.com/pmndrs/react-three-fiber) / [Drei](https://github.com/pmndrs/drei), [TanStack Query](https://tanstack.com/query), [Motion](https://motion.dev/), [d3-scale](https://github.com/d3/d3-scale), [Socket.IO client](https://socket.io/), [face-api.js](https://github.com/justadudewhohacks/face-api.js), [gltf-transform](https://gltf-transform.dev/), [meshoptimizer](https://github.com/zeux/meshoptimizer)
 - Firmware: [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI), [XPT2046_Touchscreen](https://github.com/PaulStoffregen/XPT2046_Touchscreen), [ArduinoJson](https://arduinojson.org/), [Adafruit_PN532](https://github.com/adafruit/Adafruit-PN532), [arduino-pico core](https://github.com/earlephilhower/arduino-pico)
 - Community hardware docs: [ESP32 Cheap Yellow Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display)
@@ -321,6 +335,15 @@ Without a key everything still works, and the card reads *"AI offline · checked
 
 The AI's states and instructions are in `config/ai_analyst.json`. Astra's voice is chosen on `/admin` → *Station voice*.
 
+### Optional on-device Face, Pose and voice-tone analysis (Mind page)
+
+The app runs without these. They are big downloads, so they're kept in separate files:
+
+| Feature | Install (Windows: `.venv\Scripts\python.exe`, Linux: `.venv/bin/python`) |
+|---|---|
+| Face and Pose Analysis (MediaPipe, ~100 MB) | `python -m pip install -r requirements-face.txt`, then follow [`docs/face-analysis-setup.md`](docs/face-analysis-setup.md) to download the models |
+| "Wanna talk?" voice tone (PyTorch CPU + Wav2Vec2, ~1 GB with the model) | `python -m pip install -r requirements-emotion.txt`, then `python -m backend.services.emotion download` |
+
 ### Superuser admin page (assign NFC cards, manage crew accounts)
 
 ```powershell
@@ -373,14 +396,14 @@ The full feature guide is in [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
 .venv/bin/python -m pytest        # Windows: .venv\Scripts\python.exe -m pytest
 ```
 
-279 backend tests: rules engine, serial protocol, sessions, REST API, access control, AI output validation, scheduler, bridges.
+360+ backend tests: rules engine, serial protocol, sessions, REST API, access control, AI output validation, scheduler, bridges, sensor feed, EVA history, Excel export.
 
 Frontend (needs Node.js 20.19+ or 22+):
 
 ```bash
 cd frontend
 npm install
-npm test          # 97 Vitest tests
+npm test          # 214 Vitest tests
 npm run dev       # http://localhost:5173 with hot reload (the backend must run on :5000)
 npm run build     # rebuild frontend/dist after changing the UI
 ```

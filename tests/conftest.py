@@ -5,11 +5,19 @@ from datetime import datetime, timezone
 import pytest
 
 from backend import config, db
-from backend.logic import analysis, sessions
+from backend.logic import analysis, sensor_feed, sessions
+from backend.services import analyst
 
 # Test apps never start the Pico NFC reader thread (see app.py): it would outlive its test,
 # could open the real reader plugged into a dev laptop, and races test_pico_bridge.py.
 os.environ["ASTRO_NO_PICO"] = "1"
+# ...nor load the optional voice tone model (~1 GB RAM, seconds per test app): tests use a
+# fake predictor (test_emotion.py), and the real-model test loads it itself.
+os.environ["ASTRO_NO_EMOTION"] = "1"
+# ...nor check for the optional face analysis stack; test_face_api.py turns it on itself.
+os.environ["ASTRO_NO_FACE"] = "1"
+# ...nor for the optional pose analysis stack; test_pose_analysis.py turns it on itself.
+os.environ["ASTRO_NO_POSE"] = "1"
 
 
 @pytest.fixture(autouse=True)
@@ -36,11 +44,16 @@ def no_real_ai(monkeypatch, request):
     that test it, queuing an analysis is a no-op, so the background worker can never
     write into another test's database."""
     monkeypatch.setattr(config, "ai_api_key", lambda: None)
+    monkeypatch.setattr(config, "AI_MODEL", "test/main-model")  # fixed models, whatever the env says
+    monkeypatch.setattr(config, "AI_FALLBACK_MODELS", ["test/fallback-model"])
+    monkeypatch.setattr(analyst, "_model_backoff", {})
+    monkeypatch.setattr(analyst, "_last_model", None)
     monkeypatch.setattr(analysis, "DEBOUNCE_S", 0)
     monkeypatch.setattr(analysis, "MIN_INTERVAL_S", 0)
     if request.module.__name__.split(".")[-1] not in ANALYSIS_TEST_MODULES:
         monkeypatch.setattr(analysis, "request", lambda *a, **k: None)
     analysis.reset()
+    sensor_feed.reset()  # every live wearable off
     yield
     if analysis._worker_started:
         analysis.wait_idle(5)

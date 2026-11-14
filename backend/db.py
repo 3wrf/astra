@@ -154,6 +154,75 @@ CREATE TABLE IF NOT EXISTS astra_memory (
     source TEXT NOT NULL DEFAULT 'chat'
 );
 CREATE INDEX IF NOT EXISTS idx_memory_astro ON astra_memory(astronaut_id, created_at);
+
+-- Voice tone ESTIMATES from "Wanna talk?" (backend/services/emotion.py): one row per spoken
+-- phrase. Only the scores -- the audio itself is never stored. Kept apart from `readings`
+-- on purpose: self-reported mood lives there, and this never feeds mood, levels, the health
+-- analysis or alerts. talk_id groups the phrases of one conversation.
+CREATE TABLE IF NOT EXISTS voice_tone (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    astronaut_id INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    talk_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    scores_json TEXT NOT NULL,
+    duration_s REAL NOT NULL,
+    model TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_voice_tone_astro ON voice_tone(astronaut_id, ts);
+CREATE INDEX IF NOT EXISTS idx_voice_tone_talk ON voice_tone(talk_id);
+
+-- One row per "Wanna talk?" conversation (backend/logic/voice_talks.py). The server makes
+-- the id; every voice_tone row of that conversation carries it as talk_id. result_json is
+-- the conversation-level average of its phrases' seven probabilities (no audio, ever).
+CREATE TABLE IF NOT EXISTS voice_talks (
+    id TEXT PRIMARY KEY,
+    astronaut_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    phrases_sent INTEGER NOT NULL DEFAULT 0,
+    phrases_analysed INTEGER NOT NULL DEFAULT 0,
+    phrases_skipped INTEGER NOT NULL DEFAULT 0,
+    phrases_failed INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    finish_reason TEXT,
+    kind TEXT NOT NULL DEFAULT 'talk'
+);
+CREATE INDEX IF NOT EXISTS idx_voice_talks_astro ON voice_talks(astronaut_id, ended_at);
+
+-- Face Analysis reports (backend/services/face.py): one row per finished 10-15 s webcam
+-- observation. Only the report (numbers + text) -- never images, video or landmarks.
+CREATE TABLE IF NOT EXISTS face_analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    astronaut_id INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    duration_s REAL NOT NULL,
+    frames INTEGER NOT NULL,
+    usable_frames INTEGER NOT NULL,
+    quality TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    model TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_face_analyses_astro ON face_analyses(astronaut_id, ts);
+
+-- Pose Analysis reports (backend/services/pose.py): one row per finished ~12 s webcam
+-- observation. Only the report (numbers + text) -- never images, video or landmarks.
+CREATE TABLE IF NOT EXISTS pose_analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    astronaut_id INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    duration_s REAL NOT NULL,
+    frames INTEGER NOT NULL,
+    usable_frames INTEGER NOT NULL,
+    quality TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    model TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pose_analyses_astro ON pose_analyses(astronaut_id, ts);
 """
 
 
@@ -177,6 +246,10 @@ def _migrate_schema(conn):
     for col, decl in (("username", "TEXT"), ("password_hash", "TEXT"), ("face_descriptor_json", "TEXT")):
         if col not in cols:
             conn.execute(f"ALTER TABLE astronauts ADD COLUMN {col} {decl}")
+    # voice_talks.kind (2026-11-14): "talk" = Wanna talk?, "mood_check" = the daily mood check
+    talk_cols = {r["name"] for r in conn.execute("PRAGMA table_info(voice_talks)")}
+    if talk_cols and "kind" not in talk_cols:
+        conn.execute("ALTER TABLE voice_talks ADD COLUMN kind TEXT NOT NULL DEFAULT 'talk'")
 
 
 def init_db():

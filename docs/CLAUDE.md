@@ -59,8 +59,9 @@ config/*.json               every PLACEHOLDER value (thresholds, text, missions,
 data/astro.db               created at runtime by backend/seed.py, git-ignored
 frontend/                   the React app (Vite + React 19 + Tailwind v4 + motion) -- see
                              "React frontend" below. dist/ (the build) IS committed.
-  src/pages/crew/              Overview, Body (+ body/), Trends (+ trends/stats.js), Mind, Sleep,
-                                Mission, Schedule, Learn
+  src/pages/crew/              Overview.jsx, then one folder per sidebar section (2026-11-13):
+                                daily/ (Today = the old Schedule, Mind, Sleep), health/ (Body +
+                                body/, Trends + trends/), mission/ (Mission)
   src/pages/doctor/            CrewOverview, Alerts, CrewProfile, feed.js (the alert feed)
   src/pages/admin/Admin.jsx    /admin (its own superuser login)
   src/components/              shared UI (ui/, charts/, layout/ incl. Sidebar + DoctorTools,
@@ -1478,6 +1479,11 @@ vanilla app was deleted once the last page was ported.
   into `public/models/anatomy.glb` (~2.4 MB: skeleton, wire, muscles, skin, brain, eyes, heart,
   lungs→immune, stomach). Loaded with `useGLTF(url, false, true)` (draco off, meshopt on).
   No WebGL → `three/webgl.jsx`'s fallback instead of a crash.
+  **The groin is a plain mannequin surface (2026-11-13, user's request):** the source body
+  is unclothed. `removeGroin()` in the build script cuts the external genitals out of the
+  skin and fills the hole with a smooth faired patch. Its box comes from the genital organ
+  meshes (`GROIN_FILES`), which are never drawn themselves. The muscle and skeleton layers
+  never had genitals. Any rebuild of the model keeps this; don't drop it.
 - **Face to Face**: removed 2026-11-12 (see "NVIDIA Consultation AI and Face to Face
   removed" below). It used TalkingHead bundled from `src/vendor/talkinghead/` with
   `lipsyncModules: []` + a statically imported `LipsyncEn` -- reuse that trick if a voice
@@ -3032,11 +3038,877 @@ Re-verified with the controllable fake mic, 17/17:
 
 94 frontend tests pass.
 
+## The app organized into sections: "Daily check-ins" with Today as its hub (2026-11-13)
+
+User: "organize the project, e.g. a section for what the astronaut must complete daily like
+mind, mood, sleep lab". A face-expression check (every 2 h, interval set on /admin) is coming
+later: "keep this for later". Decided with the user: the **Schedule page becomes "Today"** (not
+a second page), and the face check shows now as **"Coming soon"**.
+
+- **Sidebar** (`frontend/src/nav.js`):
+  - Overview
+  - **Daily check-ins**: Today, Mind & mood, Sleep lab
+  - **Health**: Astra & body, Trends
+  - **Mission**: Mission health, Learn
+
+  The doctor's "Crew data" list uses the same order. `nav.test.js` checks that every crew page
+  appears exactly once and that the doctor's list has the same pages.
+- **Files follow the sections:**
+  - `pages/crew/daily/`: Today.jsx (moved with `git mv` from Schedule.jsx), Mind, Sleep
+  - `pages/crew/health/`: Body + body/, Trends + trends/
+  - `pages/crew/mission/`: Mission, Learn
+
+  Every relative import was rewritten by a script that resolves each path from the file's old
+  location.
+- **Routes:**
+  - `/today` is the page; `/schedule` redirects to it.
+  - Astra's page id `"schedule"` (`analyst.PAGES`, unchanged) maps to `/today` "Today" in
+    `lib/astraActions.js`.
+  - CrewProfile's shortcut points at /today.
+- **Today page:**
+  - Workouts and sleep tracking start and stop in place (`TrackButton` → `POST /activity`,
+    the same timers as the tags and Astra).
+  - `GET /astronauts/<id>/schedule` now returns `tracking: {sleep, exercise}`, each null or
+    `{started_at, mission_min}`. The button therefore shows "Stop workout · 12 min" even for a
+    tag-started workout.
+  - `trackingRows()` puts that Stop button on ONE row per kind: the due/missed one, else the
+    next upcoming. The first version showed it on both exercise rows.
+  - New `FaceCheckSoon` card, which has no behaviour yet. **When the face check is built**, it
+    becomes a Today task, with its interval as a setting on /admin.
+- **Shared daily summary:**
+  - `lib/useToday.js`: the schedule plus `withLiveStatus`, ticking every 15 s, through
+    `todaySummary()` / `dueCount()` in `lib/schedule.js`.
+  - It feeds the sidebar's Today badge (tasks due or missed now; crew only, same style as
+    Alerts) and the new Overview strip: "Daily check-ins · N of 5 done today · Next: …",
+    per-task chips, and Open Today.
+- **Verified:**
+  - 267 backend tests (1 new) and 100 frontend tests (6 new), lint clean, dist rebuilt.
+  - Headless check on an isolated copy at 600×:
+    - the sidebar order for crew and for the doctor
+    - the badge shows "2" when two tasks are due
+    - the Overview strip and Open Today
+    - /schedule redirects
+    - the Face check card is there
+    - Start workout → "Stop workout · 1 min" on one row only → Stop logs it
+    - all 8 crew pages load, with no page errors
+
+## CYD: a Back button on every screen, and toasts return you to the page you were on (2026-11-13)
+
+User: "in my CYD I cannot return to the last page, we need Back on all pages".
+
+- **New `drawBackButton()` / `pointInBack()`** (`screens.ino`): a 46×44 "Back" tile in the
+  bottom-right corner, mirroring the SOS corner tile on the left. Each screen that draws it
+  checks `pointInBack()` first in its own touch handler.
+- **Added to these screens:**
+  - **Mood:** goes home.
+  - **Symptoms:** clears the ticks and goes home. Send is now narrower (`sendW()`) to make
+    room.
+  - **Reaction test:** stops the test and sends nothing.
+  - **Breathe:** the new `breatheTouch`; stopping early isn't logged as a breathing session.
+  - **Workout timer:** the new `exerciseTimerTouch`; the workout keeps running. The crew home
+    then shows "Workout running. Tap here to see the timer." in its bottom panel, and tapping
+    it goes back to the timer.
+  - **Wi-Fi "Connecting…":** cancels the attempt (`WiFi.disconnect()`) and goes back to the
+    password keyboard.
+- The result banner (Status) and "Unknown card" now close on **a tap anywhere**
+  (`toastUntilMs = 1`), with a "Tap anywhere to go back" line. They used to wait 3–4 s.
+- **Already had a way back:** Crew detail, Alerts and Inbox (Back tiles); the Wi-Fi menu and
+  scan (Back); the keyboard (Cancel). Idle and the two home screens are roots, and the
+  emergency is cancelled with its hold bar.
+- **Bug fixed on the way:** after a toast, `updateScreenTimers()` only knew how to redraw
+  Idle, crew home and surgeon home, and sent every other page to **Idle**. The new
+  `drawScreen(Screen)` redraws any screen, so a toast now returns you to the exact page you
+  were on.
+- `arduino-cli compile` is clean (36% flash / 16% RAM, unchanged). **Not flashed when written:
+  ask first**, and the laptop's `app.py` must release the port.
+
+## Learn page removed (2026-11-13)
+
+At the user's request ("delete learn page"):
+- deleted `pages/crew/mission/Learn.jsx`, plus its route and nav items (crew and doctor)
+- removed Astra's `learn` page id from `analyst.PAGES` and `astraActions.PAGES`
+- `/learn` now redirects to Overview, for old bookmarks
+
+The Mission group now holds only Mission health. `config/content.json` is unchanged: its
+measuring guides and body-part text are still used by the voice-screen measuring guide, the
+Body page and Astra. Older entries that mention Learn are historical.
+
+## Inside / outside (EVA) switch with suit readings the AI watches (2026-11-13)
+
+User: "a button next to the Astra button to select if I'm out of the station or in; if out,
+add options like a CO2 sensor and low suit pressure, and the AI analyzes them, detects risk
+and sends an alert".
+
+- **Where the astronaut is:**
+  - The new `backend/logic/location.py` stores it in `settings` `location:<id>` =
+    `{location: inside|eva, since}`.
+  - `counts(indicator, ts, since)`: suit readings count only during the CURRENT EVA (taken
+    since `since`).
+  - `GET/PUT /astronauts/<id>/location`: PUT is self only, otherwise 403/400. It emits
+    `location_changed` and re-runs the analysis.
+- **Suit readings** (`config/health_rules.json`, PLACEHOLDER, `eva_only: true`):
+  - `suit_co2`: mmHg, green 0–4, yellow 4.1–7.5
+  - `suit_pressure`: psi, min-type 4.0 / 3.5
+  - `suit_o2`: %, min-type 40 / 20
+  - `/assess` checks them before the transaction (0–15 / 0–6 / 0–100, no bools) and records
+    them.
+  - `health_rules.sample_suit(problem)`: normal mode is green 94% of the time, so a random red
+    doesn't set off an alarm in every demo. `problem=True` is CO2 red, pressure red, O2 yellow.
+  - `/simulate_vitals` adds them on EVA, or with `?problem=1`.
+- **Filtering:** `_today_snapshot`, `_compute_body_levels` and `analysis.build_context` skip
+  suit readings outside the current EVA. `/summary` and `/crew` return `location`.
+- **The AI:**
+  - `build_context` adds "Location: OUTSIDE … life-critical … set alert_surgeon" or
+    "Location: inside the station."
+  - `facts["eva"]`; the rules fallback's state is `on_eva`, a new state in `ai_analyst.json`,
+    unless RED.
+  - `ai_analyst.json` gets one analysis instruction line and one chat instruction line.
+  - Chat action `set_location {inside|eva}` (yes card), with a prompt example.
+- **Frontend:**
+  - TopBar `LocationPill` beside `AstraPill`, with a live EVA mission-minutes counter from
+    `time_scale`. Read-only for the surgeon.
+  - `useLocationStatus` and the `location_changed` invalidation.
+  - Overview: suit tiles first and `SUIT_FIELDS` in `NewReading` during EVA, plus "Simulate
+    suit problem".
+  - `INDICATORS` / `SUIT_INDICATORS` (left out of `TREND_INDICATORS`).
+  - CrewOverview "On EVA" chip.
+  - Astra `set_location` describe / run (PUT) / done sentence.
+- **Verified with the real Groq key** (isolated copy):
+  - the pill sits after the Astra pill and switches to "Outside · EVA"
+  - suit tiles and fields appear
+  - "Simulate suit problem" → Assess → AI RED: "Suit environment unsafe – CO₂, O₂ and pressure
+    are out of safe range. Return to the airlock now."
+  - the surgeon gets a RED alert, Astra's health notice speaks up, and the doctor card shows
+    "On EVA" with a read-only pill
+  - back inside: suit readings are no longer counted
+  - chat "I'm going outside on a spacewalk now" → `set_location eva` card; "back inside" →
+    `inside`
+  - **Gotcha:** right after a red suit emergency, the AI sensibly refuses to start another EVA
+    and says to return to the airlock. Test the chat action with an astronaut who has no fresh
+    red alert.
+  - A React "removeChild" page error appeared once in the first run and did not come back in
+    three reruns of the same flow. Watch for it.
+- 276 backend and 101 frontend tests pass.
+- **Follow-up, same day: a confirm step.** The user wanted a confirmation before the pill
+  switches.
+  - `ConfirmLocation` in TopBar.jsx copies the Mission page's `ConfirmMission` look and is
+    portalled to `<body>`, so the glass top bar can't clip it.
+  - It asks "Going outside on a spacewalk?" or "Back inside the station?". Cancel, Esc or a
+    backdrop click changes nothing.
+  - The pill is more compact: "Inside" text only at ≥2xl, and "EVA · 12 min" when outside.
+    The top bar now fits on one row at 1440 px again; the extra pill had pushed Log out onto
+    a second line.
+  - Browser-checked 8/8.
+
+## Design clean-up against a 20-point checklist (2026-11-13, branch `ui-polish`)
+
+The user pasted a 20-point design list ("delete filler badges … animate useful feedback").
+Decided with the user: **the whole app**, and **keep the frosted glass but drop the extras**.
+Look only: no behaviour, data or route changes.
+
+- **Tokens** (`src/styles/index.css` `@theme`):
+  - a type scale replaces all ~180 one-off `text-[Npx]`: caption 11 · xs 12 · label 13 ·
+    sm 14 · body 15 · base 16 · title 17 · heading 22 · display 28 · hero 40 · jumbo 52
+  - `--radius-inner: 8px` for tiles inside cards (card radius − padding)
+  - muted/subtle text a step lighter in both palettes; `src/styles/contrast.test.js` reads
+    the real tokens and fails if any text colour drops under 4.5:1 on the lightest surface
+  - `h1–h4 { text-wrap: balance }`, `p, li { text-wrap: pretty }`
+  - `.ah-num` (tabular numbers): AnimatedNumber, clocks, counts
+  - **Use these tokens for new UI, not `text-[13px]`-style sizes or raw hex.** The login and
+    3D scene art keep their own colours.
+- **Shared UI** (`components/ui/index.jsx`):
+  - `Button busy` shows a spinner and disables the button. Async buttons use it (Assess,
+    Analyze now, EVA confirm, mood, Thread send, alert ack, admin assign, Today track…).
+  - `Spinner`, and `TrendLabel` with new `trend-up/down/flat` icons in place of ↗/↘/→ text.
+  - The primary button has no glow. Cards and vital tiles don't lift on hover; only things
+    you can click do.
+- **Removed:**
+  - filler: Mind's "01", Today's "×60" chip, the Symptoms corner label, the duplicate badge
+    on the health analysis card, Login's "SECURE ACCESS"
+  - eyebrows that repeat their title (Trends, Sleep, Mind, Today, nav eyebrows for Overview)
+  - glows: logo drop-shadows, primary-button glow, the NFC block glow, the Today corner glow
+  - the glass noise grain, and pulsing dots that weren't live
+  - glyph icons (✕, ✓) in favour of `<Icon>`
+- **Headlines say the fact:**
+  - "Mood today: Good", "Last night’s sleep"
+  - Today "N of 5 done today" as the biggest number
+  - Trends "Heart rate · last 7 days"
+  - doctor "2 crew · 1 to check" (red = "need attention now", the same words as the stat
+    cards)
+- **Overview:** the analysis card hides its summary when the hero already shows it
+  (`repeatSummary`), so it isn't said twice.
+- **Login** showed a real screenshot of the crew Overview here (`public/preview/overview.jpg`).
+  **Removed 2026-11-13 at the user's request**: the login page's right side is the space video
+  now (see the login-video entry).
+- **Phone fixes:**
+  - flex-basis cards on Overview/Sleep got `min-w-0`; without it the trend card made the
+    phone page 658 px wide
+  - Mission's "Where this comes from" note moved from the title's right slot to its subtitle
+- **Top bar** stays on one row at 1440: the "click once for voice" hint shows only at ≥2xl;
+  below that the pill's tooltip says it.
+- **Verified:**
+  - 276 backend and 110 frontend tests (9 new contrast checks); lint clean; dist rebuilt
+  - before/after headless screenshots of every crew, doctor, login and admin page at 1440
+    and 390 px: no horizontal scroll, no console errors
+  - functional pass on an isolated copy: card sign-in, Assess, Analyze now, Today workout
+    start/stop (logged as an activity), EVA confirm cancel and confirm, doctor
+    acknowledge
+
+## "Wanna talk?": local Wav2Vec2 voice tone estimates (2026-11-13, branch `feature/wav2vec2-wanna-talk`)
+
+The user asked for their Kaggle-tested model `Dpngtm/wav2vec2-emotion-recognition` (7 labels:
+angry, calm, disgust, fearful, happy, sad, surprised) on the Mind page, through Astra's
+existing voice experience. Decided with the user:
+- estimates stay separate from self-reported mood;
+- no live tone during the call, and none sent to Astra's AI;
+- one estimate per phrase, not continuous audio;
+- the shared microphone is reused, and only scores are kept, never recordings.
+
+**Not committed. Master untouched.**
+
+- **The model is optional.**
+  - `requirements-emotion.txt` pins `torch==2.15.0+cpu` (PyTorch's CPU-only index) and
+    `transformers==5.22.2`. Both have Python 3.14 Windows wheels; confirmed with a pip dry-run
+    before installing. `requirements.txt` is unchanged.
+  - `backend/services/emotion.py` only imports torch in a background thread, so a missing
+    install can't break startup. status() reports `missing-deps` / `missing-model` / `loading`
+    / `ready` / `error` / `disabled`, and the API answers 503.
+  - Tests set `ASTRO_NO_EMOTION=1` (conftest).
+- **The model, pinned.**
+  - Revision `033a5751a5bb...`. Only `config.json`, `model.safetensors` and
+    `preprocessor_config.json` go into `models/wav2vec2-emotion/` (gitignored), with the
+    weights' SHA-256 checked.
+  - It loads with `local_files_only=True` and is checked to have exactly those 7 labels at
+    16 kHz.
+  - Preprocessing is the model's own `Wav2Vec2FeatureExtractor`. It matches a plain
+    transformers `pipeline("audio-classification")` call to within 0.00004 (a test).
+  - **Not yet compared with the user's own Kaggle WAV**: ask for it, and run
+    `python -m backend.services.emotion predict <file>`. That CLI resamples other rates with
+    an FFT (close to librosa, not bit-identical; a 16 kHz export from the notebook gives an
+    exact match).
+- **Measured on this laptop** (Intel Core 7 240H, 16 threads; default `THREADS = 4`):
+  - Load is 3 s and adds about 490 MB of RAM (about 720 MB for the process).
+  - Per phrase: 2 s takes about 105 ms, 5 s about 250 ms, 10 s about 490 ms, 15 s about
+    830 ms.
+  - One inference runs at a time (lock), outside the DB write lock.
+- **API** (`routes.py`):
+  - `GET /voice-tone/status` (open).
+  - `POST /astronauts/<id>/voice-tone?talk=<id>`: raw `audio/wav` body, the astronaut
+    themself only (not the surgeon). 16 kHz mono 16-bit, 1-15 s, <= 1 MB, decoded with the
+    stdlib `wave` module.
+  - `GET /astronauts/<id>/voice-tone?days=7`: self or surgeon, like the journal.
+  - New `voice_tone` table (scores only; no column can hold audio, which a test checks).
+    `readings` is never written, which a test also checks. The `voice_tone` socket event
+    invalidates `["voice-tone"]`.
+- **Capture** (`lib/toneCapture.js` + `lib/toneClip.js` + `public/worklets/pcm-capture.js`):
+  - An AudioWorklet on `stationAudio.input.source`, the shared micMeter's MediaStreamSource,
+    which is now exposed. It never calls getUserMedia itself.
+  - The worklet is a plain static file because Vite inlined it as a data: URL.
+  - `VoiceMode` gets a `toneCapture` prop, off for every other call. In that mode it:
+    - starts a recording when listening starts;
+    - in `onFinal` takes the window, but only sends it at the point where the phrase is
+      accepted as you, never for echo, room noise or "stop";
+    - turns off the cabin hum.
+  - `AstraProvider.talk()` opens the call with an opening line, added to the conversation via
+    `announce()`.
+- **Phrase boundaries: a real limitation, reported to the user.**
+  - The browser recognizer gives no timestamps. A window is from the recognizer start to
+    ENDPOINT_MS (1.2 s) after the words stop changing, and it also runs while Astra talks.
+  - A probe in headless Edge with a real speech WAV as the fake mic showed its boundaries
+    don't match the audio: "speech start" during silence, a sentence split across two
+    windows, ends seconds late.
+  - Mitigations:
+    - blocks recorded while `voiceState.speaking` are dropped, plus a 700 ms echo guard;
+    - the first 300 ms are dropped (the beep);
+    - the clip is trimmed to the loud part (`trimToVoice`);
+    - under 0.6 s of voice gives no clip.
+  - Even so, a clip can be part of a sentence. The user was told; an audio-based segmenter
+    (VAD on the continuous stream) is the proposed fix, not built.
+- **Verified:**
+  - 288 backend tests (22 new), 106 frontend tests (12 new), lint clean, dist rebuilt.
+  - On an isolated copy (port 5057, own data dir, no AI key), Edge with the fake mic plus a
+    fake recognizer and synth passed 27/27 checks:
+    - 3 phrases → 3 real estimates, with Astra's voice dropped;
+    - saved under one talk id, and mood history identical;
+    - the Mind card shows it;
+    - a normal call and the wake word send nothing;
+    - no request left the laptop, and no page errors;
+    - the surgeon can view, but the start button is disabled and a POST gets 403.
+  - With `ASTRO_NO_EMOTION=1` the talk still works (one 503, then capture stops, nothing
+    saved).
+  - **Not yet tried with a real microphone and real recognizer.**
+- **Integration pass (same day):**
+  - **Offline is now forced.** `load()` sets `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` (setdefault)
+    before the first transformers import, on top of `local_files_only=True`.
+    `test_real_model_loads_offline_in_a_fresh_process` checks that a new process with sockets
+    blocked loads from `models/wav2vec2-emotion/` with 0 connection attempts.
+  - **Real-model API test.** `test_real_model_full_api_flow_offline` POSTs
+    `tests/fixtures/voice_phrase.wav` (4.3 s of Windows offline-TTS speech, 16 kHz) through
+    Flask to the real model, then checks the row and list route have 7 probabilities summing to
+    1, mood is unchanged, no audio is stored, and there's no network.
+  - **The seven probabilities are shown.** The Mind card has a "Tone mix", all seven
+    averaged over the last talk (`talkMix()` in `toneClip.js`), plus an "Each phrase"
+    breakdown.
+  - **Records only when the model is ready.** `AstraProvider` reads `useVoiceToneStatus()`:
+    `talkMode` (header, no hum) is separate from `toneCapture` (recording, only when the status
+    is "ready"). So without the model nothing is recorded or sent; it used to send one clip and
+    get a 503.
+  - **Capture tests.** `toneCapture.test.js` (Web Audio and fetch faked) covers:
+    - it attaches to the shared mic and never calls getUserMedia;
+    - re-attaching after the mic reopens;
+    - Astra tagging;
+    - an abort during begin;
+    - each reason a clip is skipped;
+    - resampling;
+    - a relative URL, and a 503 meaning unavailable.
+  - **The browser test is in the project.** `frontend/scripts/e2e-wanna-talk.mjs` (dev
+    dependency `playwright-core`, uses the installed Edge or Chrome) builds its fake mic from
+    the fixture and refuses port 5000. Its header has the isolated-copy steps. It passed 30/30
+    with the model, and 23/23 with `ASTRO_NO_EMOTION=1`.
+  - **Live backend restarted** (user's OK) on the branch code. The model is ready, the live DB
+    gained an empty `voice_tone` table, and the readings / mood counts are unchanged (19 / 3).
+    A copy of the DB from before the restart is in the session scratchpad.
+  - 290 backend and 119 frontend tests.
+- **Real-mic fix: speech-based segmentation (same day).** The user's real-mic diagnostics
+  showed phrases thrown away as "only Astra's voice", and clips kept at 0.7–0.8 s. One clip
+  had a peak of 0.0021 RMS against a 0.008 cutoff, so 0 s of it counted as voiced.
+  Two root causes:
+  1. Blocks were tagged as hers using `voiceState.speaking`, which covers her whole turn:
+     - before the start beep;
+     - the neural echo wait (up to 0.77 s);
+     - the 320 ms end beep;
+     - a late or missing Chrome `onend`, worth up to 6 s plus 110 ms per character.
+
+     A 0.7 s guard came on top of that. So the start of the reply, or all of it, was
+     discarded.
+  2. The loudness cutoff was an absolute 0.008, but this mic (noise suppression on, no
+     auto-gain) peaks at -54 dBFS.
+
+  Now:
+  - `stationAudio.astraAudible()` follows her actual sound:
+    - the beeps and chimes for their real length (`markAstraSound`);
+    - the neural voice by its real output level, echo included;
+    - the browser voice by `speechSynthesis.speaking`.
+
+    Plus a 200 ms guard.
+  - `lib/toneCapture.js` records continuously during the Wanna Talk call (in memory, last
+    20 s, cleared on close).
+  - `lib/toneClip.js` cuts each accepted phrase by the audio itself:
+    - the background is measured (10th percentile of non-Astra frames, never below
+      -74 dBFS);
+    - onset is +10 dB, offset +6 dB, with a 400 ms hangover;
+    - at least 300 ms voiced and enough rise and fall (p90/p10 >= 2.5), so steady noise
+      doesn't count;
+    - 1 s of pre-roll, runs joined into one clip, capped at 15 s;
+    - `after`/`usedUntil` so no speech is sent twice;
+    - frames where you talk over Astra are dropped.
+  - `normalizeGain()` brings the clip to 0.1 RMS before 16-bit. The model normalises its
+    input, which a real-model test checks: the result at -54 dBFS matches full level
+    within 0.01.
+  - Diagnostics: one numbers-only `[astra] voice tone phrase N` line per phrase.
+  - `toneSegmentation.test.js` covers the cases the user listed, at the measured levels and
+    with the real fixture:
+    - you alone;
+    - you right after Astra;
+    - Astra alone, with her echo tail;
+    - fan noise and slow swells;
+    - quiet speech, and speech too near the background;
+    - talking over her;
+    - short, long, pauses, consecutive phrases with Astra between.
+- **Conversations (the Mind page's "Latest Conversation Analysis").**
+  - **New table `voice_talks`.** The server makes the id `talk-<uuid4>`, and
+    `backend/logic/voice_talks.py` runs open → close → finish. New table only: nothing
+    existing was migrated, and a test checks old rows survive. The live DB was backed up
+    first to `data/backup-2026-11-13-before-voice-talks-astro.db` (gitignored).
+  - **Phrases belong to a conversation.** `POST /voice-tone` now requires a talk that
+    exists, belongs to that astronaut, and is still active or analysing: unknown ids get
+    404, finished ones 409.
+  - **The result** is the plain mean of that conversation's phrase probabilities,
+    renormalised. The dominant tone is the highest mean.
+  - **Stale conversations finish themselves.** `finalize_stale()` (90 s after close, or
+    30 min idle) completes them as "timed out", so a closed tab never leaves the page
+    loading.
+  - **Browser side.** `lib/toneTalks.js` opens the conversation from `AstraProvider.talk()`;
+    recording waits for the id. Each phrase is tracked with `trackPhrase`. On close,
+    `finishTalk` closes it, awaits pending analyses (kept in this module, so unmounting
+    loses nothing), then finishes it.
+  - **The UI.** `GET .../voice-talks/latest` gives the latest *ended* conversation. The
+    page polls it every 2 s while it's "analysing", and the `voice_talk` event refreshes it.
+    `pages/crew/daily/mind/ConversationAnalysis.jsx` (moved there when this branch was merged into the Daily check-ins layout) has a pure `conversationView()` plus the
+    view, with loading / analysing / success / empty / error states, tested in
+    `ConversationAnalysis.test.jsx` with `react-dom/server`. The section sits below the
+    Wanna talk and voice-tone cards; the history card and mood are unchanged.
+- **Verified:**
+  - 305 backend and 146 frontend tests, lint clean, build done.
+  - `scripts/e2e-wanna-talk.mjs` passed 36/36 at normal level, 36/36 with `--level 0.0021`
+    (the user's measured mic level), and 23/23 with the model off.
+
+  That browser test fakes speech-to-text and Astra's voice. **Real-mic reliability still
+  needs the user's own test.**
+- **Existing bug found, not fixed (unrelated):** while an Astra notice card is showing, the
+  first real click on any "Talk to Astra" button (Body page too) doesn't open the call; the
+  second does.
+
+## Astra kept going quiet in "Wanna talk?": Groq's limits, now waited out or routed around (2026-11-13)
+
+User: "when I talk to Astra on the Mind page she's not answering, only analysing my voice."
+The voice-tone side worked (it runs on the laptop). The AI side kept failing, and Astra said
+"Sorry, I couldn't reach my AI" every turn.
+
+- **Cause:** the free Groq key's limits, per model.
+  - 8,000 tokens per minute, and **200,000 tokens per day** for `gpt-oss-120b`.
+  - One chat turn is about 3,000 tokens (a ~1,800-token instruction prompt plus the data and
+    history), so a minute covers about two replies and a day about 65.
+  - That day the 120b allowance was used up (198,522 of 200,000).
+  - On top of that, a 429 used to stop all AI calls for its full wait (600 s when capped),
+    and `/chat` answered 503 during it.
+- **Fix** (`backend/services/analyst.py`):
+  - Rate limits are now **per model** (`_model_backoff`), and every Groq model has its own
+    allowance. `_call_once` tries `config.AI_MODEL`, then `config.AI_FALLBACK_MODELS`:
+    default on Groq `openai/gpt-oss-20b,qwen/qwen3.8-27b`, env `AI_FALLBACK_MODELS`.
+    Both were checked live: valid answers in under 1 s, and both still return the
+    `log_mood` yes card.
+  - `model_name()` reports the model that actually answered.
+  - The wait comes from Retry-After, else Groq's `x-ratelimit-reset-tokens` ("585ms",
+    "7.66s", "1m26.4s" via `_seconds`), not a fixed 60 s.
+  - `chat()` **waits out** a short limit when it still fits the 22 s turn (with a 6 s
+    margin), instead of failing.
+  - The `/chat` route only 503s with no key (`analyst.configured()`).
+  - The server logs each 429 with Groq's reason: `[astra] AI rate limit on <model> …`.
+- **Verified:** a scripted 70 s spoken "Wanna talk?" on an isolated copy with the real key
+  (120b's day used up) got a real answer every turn, through 20b and qwen. The log shows
+  both fallbacks hitting their per-minute limits and one 1.4 s wait. Before the fix, every
+  turn got "couldn't reach my AI". 6 new tests; 327 passing.
+- **If she goes quiet again**, check the server log for `AI rate limit on`. Per day,
+  gpt-oss-120b and 20b allow 200K tokens each and qwen its own amount; heavy testing on the
+  same key uses them all up.
+
+## Login screen: video background (2026-11-12, branch `login-video-bg`; merged 2026-11-13)
+
+- 3wrf supplied a 4K space clip (Earth turning on the right). Re-encoded to 1080p, no
+  audio, ~1.8 MB (`frontend/public/media/login-bg.mp4`, ffmpeg libx264 CRF 26, faststart)
+  plus its first frame `login-bg.jpg` (poster while loading, and the only thing shown when
+  the OS has "reduce motion" on). `LoginScene.jsx` now renders that `<video>` (muted,
+  looping, playsInline) under the same left-to-right dark gradient as before, plus a soft
+  bottom fade. The old hand-animated stars/SVG Earth are in git history.
+- The branch hand-patched `frontend/dist` (its sandbox had no npm). On merging, dist was
+  rebuilt from source, so that patch is gone.
+- **2026-11-13, the clip was swapped and the screenshot removed:**
+  - The clip is now the user's "Cinematic Space Background" (a nebula drift to Earth's
+    sunrise edge): 4K, 20 s, 16.8 MB, re-encoded to 1080p, no audio, CRF 26, faststart,
+    2.6 MB. Same file names, so `LoginScene.jsx`'s paths didn't change; the exact ffmpeg
+    command is in its header comment, and the poster is the new first frame.
+  - The Overview screenshot on the right is gone (the user didn't want it), and the left
+    fade is a little lighter (.7 → 0 by 62%) so Earth shows.
+  - Checked headless at 1440/390: the video loads at 1920 wide, no `<figure>`, no preview
+    request, no sideways scroll, no errors.
+
+## Live monitor: a real NASA crew recording replayed as a wearable (2026-11-13)
+
+The user found `~/Downloads/13.zip` (122 MB). It's one crew ("13") of NASA's crew-state
+physiology study, the Kaggle "Reducing Commercial Aviation Fatalities" data:
+- 4 CSVs at ~256 Hz: CA (focused attention), DA (diverted attention, Event 5 = task
+  periods), SS (startle/surprise, Event 1 = the startles), each 6 min; LOFT (long flight sim,
+  256 MB, unused)
+- columns: 20 EEG, `ECG`, `R` (respiration belt), `GSR` (skin conductance), `Event`
+
+Asked where to use it, the user chose **"Live sensor monitor"**.
+
+- **`backend/sensor/build.py`** (one-off: `python -m backend.sensor.build <zip>`; pure Python,
+  no numpy, ~2 s) writes `backend/sensor/crew13.json` (0.34 MB, committed; the zip is not).
+  Per second, for each of CA/DA/SS:
+  - **heart rate:** R-peaks (detrended ECG, polarity auto-picked, adaptive threshold, 0.33 s
+    refractory), 60 / median RR over 10 s, then a 7 s median filter against double-counted
+    beats
+  - **breathing:** upward crossings with hysteresis over 30 s
+  - **stress 0–100:** GSR's rise above its own 30 s median baseline. Not the raw level: it
+    drifts up all session as the electrodes warm, which read as "stress 100" by the end. It's
+    scaled by max(99th-percentile rise, 4% of the person's level), so ordinary ripples don't
+    get stretched to 100; calm ≈ 20. Real result: focus/multitask average ~30 and stay ≤64;
+    the startle test hits 100 at the marked startles (HR 66 → 99 at the same time).
+  - **event flag:** only DA and SS; CA flags its whole run
+  - **ECG trace:** 100 Hz, scaled to ±127
+- **`backend/logic/sensor_feed.py`** (in memory, like `active_sessions`; loops the recording):
+  - its own worker thread emits a Socket.IO `sensor` event every second (hr, br, stress,
+    event, 100 ECG samples)
+  - **(superseded the same day: it's now a run-once test that saves on finish; see the
+    follow-up below)**
+  - `context_line()` feeds `analysis.build_context` (Astra and the health AI see it, including
+    "a startle just happened")
+- **Routes:** `GET /sensor/segments` (open); `GET /astronauts/<id>/sensor` (self or
+  surgeon); `PUT` (self only, `{"segment"}` / `{"on": false}`), which emits `sensor_changed`.
+  `/summary` carries `sensor`.
+- **New indicators** (`config/health_rules.json`, PLACEHOLDER):
+  - `respiration_rate`: green 12–20, yellow 8–11/21–26; body part `immune`
+  - `stress`: green ≤60, yellow ≤85; body part `brain`
+  - also in content.json (body parts + measure guides), `INDICATORS`, the tile icons and the
+    doctor feed units
+- **Frontend `components/LiveSensorCard.jsx`:**
+  - On the crew Overview (under the Today strip): pick a test, Start/Stop.
+  - On the doctor CrewProfile: shown only while running, with no Stop.
+  - The ECG is drawn on a canvas from `sensorStore` each animation frame, one second behind,
+    sliding through the newest chunk so it moves smoothly.
+  - Stats (the heart icon beats at the live rate), a stress bar, a "Startle event" chip, and
+    the source credited on screen.
+- **Verified:**
+  - 12 new backend tests (`tests/test_sensor.py`: synthetic ECG/breathing in, the known rate
+    out ±2; drift vs a quick rise; looping; minute saves; analysis only on change; route
+    permissions) and 1 frontend test. 339 backend + 163 frontend pass.
+  - Headless on an isolated copy: the card streams, HR 67–68, the ECG is drawn, the doctor
+    sees it without Stop, the startle chip appears at the recorded moment, a reading is saved
+    after a minute, the Breathing tile appears, Stop works, no phone overflow, no console
+    errors.
+  - Not checked with the real AI (the 120b daily allowance was used up that day).
+
+### Follow-up: the monitor is a test that saves a vitals check (2026-11-13)
+
+User: "when I finish the test, save it instead of my latest vitals, and count it as finished /
+checked".
+
+- **`sensor_feed`:**
+  - It plays the recording **once** (no loop) and no longer saves every minute.
+  - `finish()` (at the end of the recording via `tick`, or `stop(save=True)` from "Finish &
+    save") writes the test's **averages** as the latest `heart_rate` / `respiration_rate` /
+    `stress` readings (`wearable`), plus an **assessment row**: the same thing the Assess
+    button writes, with `details.wearable_test` holding peaks and startle count. Today's
+    vitals task, the hero status and `last_check` all follow it.
+  - `announce_finished()` emits `sensor_changed` (finished + result) and `assessment`, and
+    asks the AI **once** (`delay=0`).
+  - `stop(save=False)` cancels; under `MIN_SAVE_S` (5 s) nothing is saved.
+  - Route: `PUT /sensor {"on": false}` finishes, `{"on": false, "save": false}` cancels.
+- **Scheduler:** the **first vitals slot** now counts from the start of the mission day
+  (`OPEN_FROM_DAY_START = {"vitals"}`). Before this, an Assess or test before 06:00 never
+  ticked the 07:00 check (Today's "Do it early" had the same problem). Other kinds keep the
+  1-hour-early limit: a 01:00 sleep is last night's. Today's "Up next" now skips done tasks.
+- **Card:**
+  - while running: a progress bar ("0:09 / 6:00"), **Cancel** and **Finish & save**
+  - when done: a "**<test> test complete**" summary (averages, peak HR and stress, startle
+    count, level), "Saved as your latest vitals and counted as today's vitals check", and
+    **Run another test**
+  - the result arrives over the socket too (`sensorResultStore`), so an auto-finish shows
+    it, and the doctor sees it
+- **Verified:** 341 backend tests (tests rewritten for run-once; a new scheduler test).
+  Headless: start Multitasking → 0:09/6:00 → Finish & save → summary card, latest HR 104 →
+  77, Breathing/Stress tiles, Today "Morning vitals check · Done 00:03", Up next = the
+  exercise block, no errors. Also fixed a stray "0" the startle check rendered.
+
+## Mind & mood: a daily AI mood check replaces picking a face (2026-11-14)
+
+User: "remove putting the feeling manually on the Mind & mood page, only the AI detects. Each
+day I say different sentences and the AI tests my emotions from them." Decided with the user:
+**3 daily questions answered in your own words**, judged from **both** the words (Groq AI) and
+the voice tone (the on-laptop Wav2Vec2 model). Manual mood entry is removed **only on that
+page**; the CYD mood buttons and Astra's "log my mood" stay.
+
+- **Questions:** `config/mood_questions.json` (30, PLACEHOLDER). `mood_check.questions_for(astro,
+  day)` picks 3, seeded per astronaut and **mission day**: the same all day, new the next (every
+  24 real minutes at the demo's ×60).
+- **The flow:**
+  1. Mind page card "Today's mood check" (`pages/crew/daily/mind/DailyMoodCheck.jsx`) →
+     **Start mood check** → `AstraProvider.check()` opens the normal voice screen with
+     `checkMode` (header "Daily mood check · Astra").
+  2. Astra speaks the intro + Q1. `checkSubmit()` replaces the chat for this call: each answer
+     is kept and the next question spoken. After Q3 she says the outro and navigates to /mind,
+     which closes the screen.
+  3. Each answer's voice clip goes through Sameer's pipeline under a talk with **`kind =
+     "mood_check"`** (`openTalk(astroId, "mood_check")`).
+  4. `lib/moodCheck.js` `submitMoodCheck()` awaits `finishTalk` (all clips analysed), then
+     `POST /astronauts/<id>/mood-check {answers, day_index, talk_id}`. The card shows
+     "Analyzing…", then the result (face, mood, AI summary, emotion words, voice tone line,
+     "Judged by AI · model").
+  - No speech recognition / not localhost / "Type my answers instead": the same 3 questions
+    as text boxes; words only, no tone.
+- **Backend:**
+  - `backend/logic/mood_check.py`: `judge()` calls `analyst.mood_check()` (JSON `{mood,
+    summary ≤240, emotions ≤3}`, `parse_mood_check` validates, one retry, uses the fallback
+    models). Fallbacks: the tone alone (`TONE_MOOD` weights: happy 5, calm 4, surprised 3,
+    sad/fearful 2, disgust 1.5, angry 1), or with no tone a small word list. `source` is
+    "rules" then.
+  - `save()` writes an ordinary `mood` reading with `source='voice_check'` (value: mood, score,
+    note = summary, emotions, checked_by, model, tone, talk_id, day, answers) and
+    `astra_memory.note_mood`. So the chart, Wellbeing, Trends, Today and the health AI all
+    follow it.
+  - Routes: `GET /astronauts/<id>/mood-check` (self or surgeon → `{day, day_index, questions,
+    today}`); `POST` (self only; 3 non-empty answers; `day_index` may be today or yesterday,
+    so a check that straddles midnight keeps its questions; a `talk_id` must be theirs). The
+    AI call runs outside the DB lock. It emits `cyd_event` mood + `mood_check` and asks the
+    health analysis once.
+  - `voice_talks.kind` column (migration in `db._migrate_schema`). `latest()` only shows
+    `kind='talk'`, so mood checks never replace "Latest Conversation Analysis".
+  - Scheduler: `OPEN_FROM_DAY_START = {"vitals", "mood"}`, so a morning mood check ticks
+    Today's (evening) mood task.
+  - `config/ai_analyst.json` `mood_check_instructions` (use both words and tone; if they
+    disagree lean on the words and mention the tone; don't diagnose).
+- **Verified:**
+  - 348 backend tests (7 new in `tests/test_mood_check.py`; the scheduler test now checks a
+    02:00 mood counts and a 02:00 workout doesn't). 167 frontend tests (4 card-state tests).
+  - Isolated copy, real Groq key + real voice model, headless with fake speech:
+    - Astra spoke the intro and the 3 questions
+    - 3 clips analysed (calm ×3) under a mood_check talk
+    - the AI judged **Low** from "really tired… stressed", "woke up twice… worn out" (leaning
+      on the words over the calm tone, as instructed)
+    - card shown, Today's mood task done, Latest Conversation Analysis unchanged
+  - Without speech recognition: Do it again → typed form → **Great**, no voice line. The
+    doctor sees the result with no buttons. No phone overflow, no console errors.
+  - **Not yet tried with a real microphone.**
+
+## Face Analysis on the Mind page (2026-11-13, branch `feature/face-analysis-setup`)
+
+The setup is in `docs/face-analysis-setup.md`: MediaPipe 1.2.3, OpenCV 5.0, and the model in
+`models/face_analysis/`. The feature is described in that file's "Phase 2" section.
+
+- **Where MediaPipe runs:** in Python on the backend, in VIDEO mode (`backend/services/face.py`,
+  one landmarker per session). The browser sends 640 px JPEG frames to localhost; each is
+  measured (`backend/logic/face_metrics.py`) and dropped. This was chosen over
+  `@mediapipe/tasks-vision` in the browser so the already verified Python stack is reused, with no
+  new download.
+- **Frontend:** `lib/faceCamera.js` opens the camera video-only and paces frames at 10 fps,
+  waiting for each answer. The card is `pages/crew/daily/mind/FaceAnalysis.jsx`.
+- **Reports are stored as numbers only** in `face_analyses`. A `face_analysis` socket event
+  refreshes the card.
+- **Thresholds come from real output** on the user's webcam (documented in `face_metrics.py`).
+  Sharpness was recalibrated for 640 px frames: a 1280 px still gives about 79, the same at 640 px
+  about 32.
+- **Skin colour is inconclusive under a colour cast,** and the user's room is very blue (b\* about
+  −30).
+- **A very dark feed gives no face at all,** so the whole-frame light (`frame_L`) is used to say
+  "too dark" instead of "no face".
+- **Test gotcha:** Chromium's built-in fake camera picture is nearly black, so for a no-face case
+  use a lit picture (the e2e script uses `earth.jpg`). Astra's wake-word mic is a separate
+  audio-only stream on the page, so a camera-release check must look only at streams that have
+  video tracks.
+- **Verified:**
+  - 28 backend face tests, with the real model and the user's photo through
+    `ASTRO_FACE_TEST_IMAGE`; 354 backend tests in total.
+  - 175 frontend tests, lint clean, build done.
+  - The browser e2e passed 18/18, and Wanna Talk still passed 36/36.
+  - **Not yet tried with the user's real webcam** (only their photo played as a fake camera).
+
+## Face ID made reliable, and Sameer's face packages (2026-11-14)
+
+User: "install the packages; Face ID isn't taking my face properly, and after saving it the
+login doesn't detect my face. Make it work perfectly."
+
+**Sameer's Face Analysis packages: installed, then removed again.**
+`pip install -r requirements-face.txt` and `download_model.py` worked (the model is in
+`models/face_analysis/`, gitignored). But on this Linux laptop, MediaPipe 1.2.3 gets
+**SIGKILLed the moment `FaceLandmarker.create_from_options()` runs**:
+- reproduced with a 15-line script, inside and outside the sandbox
+- no OOM and no systemd-oomd event
+- gdb shows the process didn't send it itself; a child process starts just before
+- `MEDIAPIPE_DISABLE_GPU=1` doesn't help
+
+The app only *imports* MediaPipe at start, but the first Face Analysis use would kill the
+**whole server**. So `mediapipe` + `opencv-contrib-python` were uninstalled again (numpy stays:
+torch needs it), and the card shows "install requirements-face.txt". **Before reinstalling,
+Sameer should run his landmarker in a subprocess or find the Linux cause.** Face ID doesn't
+use MediaPipe.
+
+**Face ID v2** (face-api.js, in the browser; the decision is still server-side):
+- **Causes:**
+  - one snapshot from a 320×240 feed with `TinyFaceDetector` defaults (misses faces in dim
+    light)
+  - one stored sample, so a single bad frame ruined every later login
+  - no feedback about why
+- **`lib/faceId.js`:**
+  - **SSD MobileNet v1** detector vendored (`public/vendor/faceapi-models/ssd_mobilenetv1_model-*`,
+    5.6 MB, same `justadudewhohacks/face-api.js` weights repo), with Tiny as a fallback;
+    min scores 0.5 / 0.45; a small detection under 0.7 counts as "no face" (a picture of
+    Earth gave a false small face)
+  - a 640×480 camera
+  - `analyzeFrame()` gives `{ok, reason}`, reason one of dark / none / many / far (face <16%
+    of the width) / turned (landmark yaw > 0.3) / moving, with `GUIDANCE` text for each
+  - `createScanner()` analyses frames back to back, each stamped `at`
+  - pure helpers: `distance`, `meanDescriptor`, `dropOutliers` (0.45 from the mean),
+    `tooSimilar` (0.06), `yawOf`
+- **`components/FaceCam.jsx`:** mirrored video plus a canvas face box (green = usable).
+- **Enrollment** (Account, `AccountDrawer.jsx`):
+  - collects **8 samples**; a near-copy is skipped at most twice in a row, so a still face
+    can't stall it
+  - drops outliers, then sends `{descriptors}`; a progress bar meanwhile
+  - gives up after **60 analysed frames**: frame counts, not seconds. A time limit failed on
+    a slow machine (software-rendered test browser, about 1.3–5 s a frame) and would on an
+    old laptop too.
+- **Sign-in** (`Login.jsx`):
+  - opening Face ID scans by itself; every 3 good frames go to `POST /auth/face_login
+    {descriptors}`
+  - "Not recognised yet" keeps going; it gives up after **40 analysed frames** with **Try
+    again**
+  - a 404 means "No Face ID set up yet"
+- **Server** (`routes.py`):
+  - `set_face_id` takes 3–20 samples, rejects a set whose samples are >0.6 from their mean
+    ("not one face"), and stores `{"v": 2, "samples", "mean"}`. The legacy `{descriptor}`
+    still works (one sample).
+  - `face_login {descriptors}`: `_match_face_frames()`. A frame's distance to a person is
+    the min over their samples and mean. A frame votes when it's ≤ **0.5** and **0.06**
+    closer than the next person; **2 votes** (or every frame if fewer were sent) sign in.
+  - The legacy `{descriptor}` keeps the old 0.6 rule. `_face_samples()` reads both formats.
+  - **Old single-sample enrollments still load, but re-enrolling is recommended.**
+- **Verified:**
+  - 354 backend tests (5 new in `tests/test_face_id.py`, synthetic descriptors) and 188
+    frontend tests (5 helper tests).
+  - Headless end-to-end with **real faces through the real models**: NASA public-domain
+    portraits as fake-camera `.y4m` videos (4:3 crop, slow zoompan drift, sensor noise).
+    8/8:
+    - Sunita Williams enrolled from her 2018 photo, Christina Koch from her EMU portrait
+    - each signed in from a **different, older photo** of themselves, to the right account
+    - a dimmed Sunita still signed in
+    - Scott Kelly refused ("Not recognised yet", gave up)
+    - a very dark feed signed nobody in
+    - Earth said "No face found"
+  - **Not yet tried with the user's own webcam:** they should re-enroll first.
+
+## Crew records: filter every astronaut's daily data and export a real Excel file (2026-11-14)
+
+User: "the astronauts' daily data saved, filter it as a surgeon or admin, export an Excel
+(.xlsx) file, make it specific". Decided with the user: the data stays in SQLite (it already
+was), and the Excel file is **built on demand**. It includes **all four categories**: vitals and
+wearable, daily check-ins, health events, and private notes.
+
+- **`backend/logic/records.py`** is the one query layer behind both the page and the file.
+  - `parse_filters()` reads the request.
+    - `astronauts` defaults to every crew member except the flight surgeon.
+    - `from`/`to` default to the last 7 days. Reversed dates are swapped; the maximum is 366
+      days.
+    - `tz` is the browser's minutes east of UTC, so "a day" means the viewer's local day.
+    - `categories` and `level` (any, YELLOW or RED).
+    - `q` is a text search.
+  - `readable()` turns stored values into readable cells, with no JSON in any cell: BP
+    "120/80", sleep "7 h 30 m", mood "Low", reaction "300 ms, 1 lapses".
+  - `SECTIONS` has 15 sections:
+    - vitals
+    - mood checks (the AI daily check: mood, judged by, summary, emotions, voice, answers 1–3),
+      other mood logs
+    - sleep, exercise (readings plus activities), other activities
+    - symptoms
+    - pain (level taken from intensity: 7+ red, 4+ amber)
+    - assessments, alerts (seen yes/no), AI analyses
+    - journal, voice tone (labelled "Mood check" or "Wanna talk?"), face analysis
+  - `daily_summary()` makes one row per astronaut per local day:
+    - HR avg/min/max, last BP, max temperature, min SpO2, average sugar
+    - breathing, stress, sleep hours, mood ("(AI check)" when it came from the daily check),
+      exercise minutes
+    - symptoms, worst pain, alert count, the AI's last state
+    - the worst level of the day
+- **`backend/services/excel_export.py`** uses **XlsxWriter** (new in `requirements.txt`;
+  write-only and pure Python).
+  - Sheets, in order:
+    - **Summary**: the filters used, the crew, row counts per sheet, and the disclaimer
+    - **Daily**
+    - one sheet per section
+  - Every data sheet has a coloured, frozen header row and an autofilter.
+  - Times are real Excel date-times and numbers are real numbers.
+  - Level cells are coloured Good/Check/Alert, and long text wraps.
+  - The file is named `crew-records_<from>_<to>.xlsx`.
+- **Routes:**
+  - `GET /api/records` returns JSON: the daily summary, plus the newest 500 rows of each
+    section with its total.
+  - `GET /api/records/export.xlsx` returns the file, with the same filters.
+  - Both are open to the **flight surgeon or a superuser** (`_records_access`). A crew member
+    gets 403; with nobody logged in, 401.
+  - The old per-astronaut CSV route still exists, but nothing links to it any more.
+- **Frontend** (`components/records/RecordsBrowser.jsx`, with the URL logic in
+  `lib/records.js`):
+  - The filter bar has crew chips, date presets or custom dates, category chips, the level
+    filter and search. Every filter lives in the URL, so a view can be reloaded or shared.
+  - Below it are the Daily summary table and a tab per section with its count.
+  - **Export to Excel** downloads exactly the filtered view.
+  - It appears in three places:
+    - the doctor sidebar's **Records** item (`/doctor/records`, Monitor group)
+    - a "Crew records" card on `/admin`
+    - the doctor's per-astronaut "Records" links (CrewProfile and DoctorTools), which open it
+      filtered to that person for the last 30 days
+- Small fix made along the way: the wearable test's saved note no longer reads "…test test".
+- **Verified:**
+  - 7 new backend tests (`tests/test_records.py`) cover filters, tz day ranges, readable
+    values, access, sections and filters, the daily maths, and the xlsx zip itself (sheet
+    names, autofilter, frozen header, a real date serial). 361 passed in total.
+  - 5 new frontend tests, 193 in total. Lint is clean and dist is rebuilt.
+  - Checked on an isolated copy with seeded data for 2 astronauts across several days:
+    - filters work, including from the URL
+    - the download works
+    - the xlsx opened with openpyxl shows all 16 sheets, frozen A2, autofilters, datetime
+      cells and coloured level cells
+    - the admin card works
+    - crew get 403
+    - no sideways scroll at phone width
+
+## Real spacewalk history from NASA's EVA log (2026-11-14)
+
+The user supplied `eva_cleaned.csv`, a team-cleaned copy of NASA's "Extra-vehicular Activity
+(EVA) - US and Russia" log from data.nasa.gov. It's kept as `backend/eva/nasa_eva.csv`
+(committed) and covers 375 spacewalks from 1965 to 2013: 368 completed, 6 cancelled, USA 236,
+Russia 139.
+
+It has **no suit sensor values**, so the EVA suit readings stay simulated, with PLACEHOLDER
+limits.
+
+- **`backend/logic/eva_history.py`** works from these real figures:
+  - Lengths: typical 6.01 h, 90% ended by 7.35 h, record 8.93 h (Voss & Helms, 2001).
+  - Averages per decade.
+  - `compare(hours)` gives the share of completed spacewalks that were shorter.
+  - `INCIDENT_PICKS` holds 14 real suit problems from the notes: CO2, pressure or leaks,
+    oxygen, and cooling or water in the helmet (Parmitano, 2013). They were picked by hand
+    because keyword matching also caught station hardware such as the "O2 generator".
+  - `CREW_FIXES` fixes one typo in the source file for display only; the CSV stays as NASA
+    published it.
+- **Route:** `GET /api/eva-history` is open (static data, like `/content`).
+- **AI:** during an EVA, `analysis.build_context` adds a line comparing this EVA with the real
+  ones, plus a real past incident matching any amber or red suit reading.
+- **Frontend:** `components/EvaHistoryCard.jsx` appears only while on EVA, on the crew Overview
+  and the doctor's CrewProfile.
+  - It shows the live length ("This spacewalk: 7 h 37 min") as a bar marked with the typical
+    length, the 90% mark and the record.
+  - When a suit reading isn't green, it lists "Real spacewalks that had this problem".
+  - It credits the source and says the suit readings are simulated.
+- **Fixed along the way:** `CardTitle` now wraps its right-side buttons below the title on
+  narrow screens. Before this, the EVA "Simulate suit problem" buttons made the phone page
+  426 px wide.
+- **Verified:**
+  - 5 new backend tests (`tests/test_eva_history.py`); 366 backend tests in total.
+  - Headless check on an isolated copy: the card shows, a 7.6 h EVA with red CO2 and amber
+    pressure lists the matching real incidents, there's no phone overflow, and there are no
+    errors.
+
+## Pose Analysis on the Mind page (2026-11-14, branch `feature/face-analysis-setup`)
+
+Built the same way as Face Analysis and fully separate from it (own service, routes, table, card).
+
+- **Model:** MediaPipe Pose Landmarker **lite**, float16 v1, from Google's own storage
+  (`scripts/pose_analysis/download_model.py`, MD5-checked against Google's header, sha256
+  `59929e1d...574a`), stored at `models/pose_analysis/pose_landmarker_lite.task` (gitignored).
+  No new packages: the MediaPipe 1.2.3 in `requirements-face.txt` already has `PoseLandmarker`.
+- **Backend:** `backend/services/pose.py` (VIDEO mode, one landmarker per session, own lock),
+  `backend/logic/pose_metrics.py` (shoulder/hip tilt, side-to-side torso lean, head offset/tilt/
+  height, left/right asymmetry, sway/speed, per-region visibility). Frames are measured in
+  memory and dropped; only the report goes into `pose_analyses`. Routes: `/api/pose/status`,
+  `/api/astronauts/<id>/pose/sessions[/<sid>/frames|finish|cancel]`, `/pose/latest`.
+  `ASTRO_NO_POSE=1` turns it off (tests set it); `ASTRO_POSE_MODEL` overrides the model path.
+- **Frontend:** `pages/crew/daily/mind/PoseAnalysis.jsx`, `lib/poseCamera.js` (reuses
+  `faceCamera.js`'s camera helpers unchanged). `lib/cameraClaim.js` hands the one webcam between
+  Face and Pose: opening one stops the other (the only change to `FaceAnalysis.jsx`).
+- **Thresholds are NOT calibrated on a real webcam yet** (visibility 0.5 is MediaPipe's own
+  cut-off; minimum shoulder width 0.07 of the frame width). Calibrate them like face_metrics.py
+  once a real session has been recorded.
+- **Gotchas:** the lite model gave a false positive on a login-video frame of the Earth (in
+  IMAGE mode, at 1920 px), and found the trailer's cartoon astronaut only at 1280 px, not at
+  640 px. Both are out-of-distribution pictures; a real person close to a webcam is the
+  intended case.
+- **Verified (2026-11-14):** 32 backend pose tests (the real model loads and runs locally, ~10 ms
+  per 640 px frame; with `ASTRO_POSE_TEST_IMAGE` set to the trailer's astronaut frame it finds a
+  body and measures it); 385 backend tests total; 196 frontend tests; lint has 0 errors; browser
+  e2e `frontend/scripts/e2e-pose-analysis.mjs` 19/19 against an isolated copy. **Not yet tried
+  with a real person or the user's real webcam.**
+- **Linux caveat (from the Face ID entry above):** on the laptop where MediaPipe 1.2.3 is killed the
+  moment a landmarker is created, Pose would take the server down the same way as Face; there
+  mediapipe is uninstalled, so both cards just say "install requirements-face.txt". A
+  subprocess around the landmarker is the fix if that machine needs these features.
+
 ## Testing
 
-- `.venv/bin/python -m pytest` — 266 tests (rules engine, protocol, sessions, REST API, symptoms,
-  login/access control, scheduler, SPA serving, CYD logout, bridge auto-detect).
-- `cd frontend && npm test` — 94 Vitest tests (format, trends stats, alert feed, report text, voice, wake word, barge-in, Astra actions/notices, hearing);
+- `.venv/bin/python -m pytest` — 424 tests + Sameer's face module skipped without MediaPipe (7 voice tests skip without the optional voice model) (voice tone + conversations, rules engine, protocol, sessions, REST API, symptoms,
+  login/access control, crew records + Excel export, scheduler, SPA serving, CYD logout, bridge auto-detect).
+- `cd frontend && npm test` — 211 Vitest tests (crew records filters, voice tone segmentation, capture, conversations, Mind section, format, trends stats, alert feed, report text, voice, wake word, barge-in, Astra actions/notices, hearing, text contrast);
   `npm run lint` must stay clean; `npm run build` then commit `frontend/dist`.
 - `.venv/bin/python app.py --simulate` then exercise the feature at `http://localhost:5000`
   (the Simulator drives every CYD event through the same code path a real tap would).

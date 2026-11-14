@@ -4,10 +4,11 @@
 // in), with username/password and Face ID as secondary expandable options below it --
 // the mockup only ever showed a password form. The actual NFC login happens in
 // AuthProvider (any "scan" broadcast while signed out is tried as a login).
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { post } from "../lib/api.js";
-import { captureDescriptor, startCamera, stopCamera } from "../lib/faceId.js";
+import { GUIDANCE } from "../lib/faceId.js";
+import { FaceCam } from "../components/FaceCam.jsx";
 import { useMission } from "../lib/queries.js";
 import { useAuth } from "../auth/AuthProvider.jsx";
 import { connectionStore, loginScanModeStore, setLoginScanMode, useStore } from "../lib/socket.js";
@@ -91,27 +92,60 @@ export function Login() {
   const [pwNotice, setPwNotice] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
 
-  // face id
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
+  // face id: scans by itself -- every good frame is kept, and each 3 new ones go to the server,
+  // which votes (2 of 3 must match the same person). Gives up after FACE_MAX_FRAMES frames.
+  const FACE_MAX_FRAMES = 40; // give up after this many analysed frames (frames, not seconds: same on a slow laptop)
   const [faceNotice, setFaceNotice] = useState("");
-  const [faceBusy, setFaceBusy] = useState(false);
+  const [faceScanning, setFaceScanning] = useState(false);
+  const [faceGaveUp, setFaceGaveUp] = useState(false);
+  const face = useRef({ frames: [], sent: 0, inflight: false, seen: 0, done: false });
 
-  useEffect(() => {
-    if (method !== "face") return undefined;
-    let cancelled = false;
-    const t = setTimeout(async () => {
-      try {
-        const s = await startCamera(videoRef.current);
-        if (cancelled) { stopCamera(s); return; }
-        streamRef.current = s;
-        setFaceNotice("Center your face, then capture.");
-      } catch (err) {
-        if (!cancelled) setFaceNotice(`Camera unavailable: ${err.message}`);
+  function startFaceScan() {
+    face.current = { frames: [], sent: 0, inflight: false, seen: 0, done: false };
+    setFaceGaveUp(false);
+    setFaceNotice("Loading the face model…");
+    setFaceScanning(true);
+  }
+  function onFaceCamera(r) {
+    if (r.ok) startFaceScan();
+    else setFaceNotice(`Camera unavailable: ${r.error}`);
+  }
+  async function onFaceFrame(r) {
+    const f = face.current;
+    if (f.done) return;
+    f.seen += 1;
+    if (f.seen > FACE_MAX_FRAMES && !f.inflight) {
+      f.done = true;
+      setFaceScanning(false);
+      setFaceGaveUp(true);
+      setFaceNotice("Couldn’t recognise you. Try again facing a light, or use your NFC card.");
+      return;
+    }
+    if (r.reason === "error") { setFaceNotice(`Face model error: ${r.error}`); return; }
+    if (!r.ok) { setFaceNotice(GUIDANCE[r.reason] || GUIDANCE.none); return; }
+    f.frames.push(r.descriptor);
+    if (f.inflight || f.frames.length - f.sent < 3) { setFaceNotice(GUIDANCE.ok); return; }
+    f.sent = f.frames.length;
+    f.inflight = true;
+    setFaceNotice("Checking…");
+    try {
+      const me = await post("/auth/face_login", { descriptors: f.frames.slice(-3) });
+      f.done = true;
+      setFaceScanning(false);
+      signIn(me);
+    } catch (err) {
+      if (err?.status === 404) {
+        f.done = true;
+        setFaceScanning(false);
+        setFaceGaveUp(true);
+        setFaceNotice("No Face ID is set up yet. Sign in with your card, then enroll it in Account.");
+      } else {
+        setFaceNotice("Not recognised yet: keep looking at the camera…");
       }
-    }, 320); // after the panel has expanded
-    return () => { cancelled = true; clearTimeout(t); stopCamera(streamRef.current); streamRef.current = null; };
-  }, [method]);
+    } finally {
+      f.inflight = false;
+    }
+  }
 
   async function submitPassword(e) {
     e.preventDefault();
@@ -126,26 +160,9 @@ export function Login() {
     }
   }
 
-  async function captureFace() {
-    setFaceBusy(true);
-    setFaceNotice("Loading face model…");
-    try {
-      const descriptor = await captureDescriptor(videoRef.current);
-      if (!descriptor) { setFaceNotice("No clear face found. Try again."); return; }
-      setFaceNotice("Checking…");
-      const me = await post("/auth/face_login", { descriptor });
-      stopCamera(streamRef.current);
-      streamRef.current = null;
-      signIn(me);
-    } catch {
-      setFaceNotice("Face not recognized. Try again or use another method.");
-    } finally {
-      setFaceBusy(false);
-    }
-  }
-
   const toggle = (m) => {
-    if (m === "face" && method !== "face") setFaceNotice("Starting camera…");
+    if (m === "face" && method !== "face") { setFaceNotice("Starting camera…"); setFaceGaveUp(false); }
+    if (m !== "face" || method === "face") setFaceScanning(false);
     setMethod((cur) => (cur === m ? null : m));
   };
 
@@ -155,13 +172,13 @@ export function Login() {
 
       <header className="relative z-[1] flex flex-wrap items-center justify-between gap-4 px-[clamp(16px,5vw,72px)] py-7">
         <div className="flex items-center gap-3">
-          <LogoCrew width={40} height={40} className="rounded-xl shadow-[0_0_24px_rgba(74,104,236,.5)]" aria-hidden="true" />
+          <LogoCrew width={40} height={40} className="rounded-xl" aria-hidden="true" />
           <div>
             <span className="block font-display text-lg font-bold tracking-tight">{STRINGS.appName}</span>
-            <span className="text-[11px] tracking-[0.12em] text-muted">CREW HEALTH · MISSION MEDICINE</span>
+            <span className="text-caption tracking-[0.12em] text-muted">CREW HEALTH · MISSION MEDICINE</span>
           </div>
         </div>
-        <span className="flex items-center gap-2 rounded-full border border-[rgba(143,166,255,.18)] bg-[rgba(19,26,48,.6)] px-3.5 py-2 text-[13px] text-[#cfd9ff]">
+        <span className="flex items-center gap-2 rounded-full border border-[rgba(143,166,255,.18)] bg-[rgba(19,26,48,.6)] px-3.5 py-2 text-label text-[#cfd9ff]">
           <span className="h-2 w-2 rounded-full bg-mars" />
           {mission.data?.profile?.short || mission.data?.profile?.label || "Mission"}
         </span>
@@ -176,10 +193,7 @@ export function Login() {
           className="flex w-full max-w-[440px] flex-col gap-[18px] rounded-hero ah-glass-flat p-[clamp(22px,4vw,36px)] shadow-[0_30px_80px_rgba(0,0,0,.45)]"
         >
           <div>
-            <span className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.16em] text-accent-text before:h-px before:w-[18px] before:bg-accent-text before:content-['']">
-              SECURE ACCESS
-            </span>
-            <h1 id="login-title" className="mt-2.5 mb-0 font-display text-[clamp(28px,4vw,38px)] leading-[1.1] font-bold tracking-[-0.025em]">
+            <h1 id="login-title" className="m-0 font-display text-[clamp(28px,4vw,38px)] leading-[1.1] font-bold tracking-[-0.025em]">
               Welcome aboard
             </h1>
             <p className="mt-1.5 mb-0 text-sm text-ink-2">Sign in to monitor crew health and stay connected with mission medicine.</p>
@@ -190,7 +204,7 @@ export function Login() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25, duration: 0.5, ease: EASE_ENTER }}
-            className="flex flex-col gap-2 rounded-[15px] border-[1.5px] border-accent bg-[rgba(74,104,236,.08)] px-[18px] py-4 shadow-[0_0_25px_rgba(74,104,236,.12)]"
+            className="flex flex-col gap-2 rounded-[15px] border-[1.5px] border-accent bg-[rgba(74,104,236,.08)] px-[18px] py-4"
           >
             <div className="flex items-center gap-3">
               <span className="relative flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full bg-accent text-white">
@@ -207,12 +221,12 @@ export function Login() {
               </div>
             </div>
             {connection === "offline" ? (
-              <p className="m-0 flex items-center gap-2 text-[13px] text-check-fg" role="status">
+              <p className="m-0 flex items-center gap-2 text-label text-check-fg" role="status">
                 <span className="h-2 w-2 rounded-full bg-check-fg animate-[ah-pulse-dot_0.8s_ease-in-out_infinite]" />
                 Reconnecting to the station… a card tapped now will still sign you in.
               </p>
             ) : (
-              <p className="m-0 flex items-center gap-2 text-[13px] text-accent-text" role="status">
+              <p className="m-0 flex items-center gap-2 text-label text-accent-text" role="status">
                 <span className="h-2 w-2 rounded-full bg-accent-text animate-[ah-pulse-dot_1.2s_ease-in-out_infinite]" />
                 Waiting for a card tap…
               </p>
@@ -220,7 +234,7 @@ export function Login() {
             {/* Only affects a tap made from the web (the Simulator's NFC buttons) -- a
                 real physical tap on actual hardware always signs in its own CYD too,
                 since there's no way for real hardware to know this browser's choice. */}
-            <div className="mt-1 flex flex-col gap-1.5 border-t border-[rgba(74,104,236,.18)] pt-2.5 text-[12px] text-ink-2">
+            <div className="mt-1 flex flex-col gap-1.5 border-t border-[rgba(74,104,236,.18)] pt-2.5 text-xs text-ink-2">
               <label className="flex cursor-pointer items-center gap-2">
                 <input type="radio" name="scan-mode" checked={scanMode === "cyd"} onChange={() => setLoginScanMode("cyd")} />
                 Also sign in my CYD
@@ -242,14 +256,14 @@ export function Login() {
           >
             <form onSubmit={submitPassword} className="flex flex-col gap-3.5">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-[#dbe2f5]">Username</span>
+                <span className="text-label font-medium text-[#dbe2f5]">Username</span>
                 <span className="relative">
                   <Icon name="user" size={18} className="pointer-events-none absolute top-3.5 left-3.5 text-subtle" />
                   <input className={fieldCls} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" placeholder="ahmad@station.crew" />
                 </span>
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-[#dbe2f5]">Password</span>
+                <span className="text-label font-medium text-[#dbe2f5]">Password</span>
                 <span className="relative">
                   <Icon name="lock" size={18} className="pointer-events-none absolute top-3.5 left-3.5 text-subtle" />
                   <input
@@ -292,11 +306,9 @@ export function Login() {
             open={method === "face"}
             onToggle={() => toggle("face")}
           >
-            <div className="mb-2.5 overflow-hidden rounded-xl bg-space">
-              <video ref={videoRef} muted playsInline className="block max-h-[200px] w-full -scale-x-100 object-cover" />
-            </div>
-            <button onClick={captureFace} disabled={faceBusy} className={submitCls}>Capture & sign in</button>
-            {faceNotice && <p className="mt-2.5 mb-0 text-xs text-check-fg" role="status">{faceNotice}</p>}
+            <FaceCam active={method === "face"} scanning={faceScanning} onFrame={onFaceFrame} onCamera={onFaceCamera} className="mb-2.5" />
+            {faceNotice && <p className="m-0 text-xs text-check-fg" role="status">{faceNotice}</p>}
+            {faceGaveUp && <button onClick={startFaceScan} className={cx(submitCls, "mt-2.5")}>Try again</button>}
           </AltMethod>
 
           <div className="flex items-center gap-3 border-t border-[rgba(143,166,255,.14)] pt-4">
@@ -321,7 +333,7 @@ export function Login() {
             <button onClick={() => setContactOpen(true)} className="cursor-pointer text-accent-text hover:underline">Contact mission ops</button>{" "}
             to get set up.
           </p>
-          <p className="m-0 text-center text-[10px] text-placeholder">{STRINGS.footerDisclaimer}</p>
+          <p className="m-0 text-center text-caption text-placeholder">{STRINGS.footerDisclaimer}</p>
         </motion.section>
       </main>
 

@@ -5,22 +5,25 @@ import csv
 import io
 import json
 import math
+import re
+import time
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request, Response
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from backend import db, seed
-from backend.logic import analysis, astra_memory, exercise, sessions, health_rules, symptoms
+from backend.logic import analysis, astra_memory, eva_history, exercise, location, mood_check, records, sensor_feed, sessions, health_rules, symptoms, voice_talks
 from backend.jobs import comms, scheduler
 from backend.hardware import protocol
 from backend.auth import auth, admin_auth
-from backend.services import analyst, voice
+from backend.services import analyst, emotion, excel_export, face, pose, voice
 from backend import voice_settings
 from backend.config import (
     content as load_content, missions as load_missions,
     mission_health as load_mission_health,
     routine as load_routine, exercises as load_exercises,
+    TIME_SCALE,
 )
 
 
@@ -32,10 +35,27 @@ def rows(rs):
     return [dict(r) for r in rs]
 
 
+FACE_WINDOW_S = 12  # the observation window (10-15 s asked for)
+FACE_FPS = 10
+POSE_WINDOW_S = 12  # Pose Analysis observation window
+POSE_FPS = 10
+_TALK_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")  # groups one "Wanna talk?" conversation's phrases
+
+
 # ---- login: shared by the NFC/password/Face ID auth routes below ----
 
 FACE_MATCH_THRESHOLD = 0.6  # field-standard Euclidean threshold -- face-api.js's own default,
-                            # also what the Python face_recognition/dlib library uses.
+                            # also what the Python face_recognition/dlib library uses. Used for
+                            # the legacy one-snapshot login only.
+# Face ID v2 (2026-11-14): enrollment stores several samples; sign-in sends a few frames and
+# needs at least FACE_FRAMES_NEEDED of them within FACE_FRAME_THRESHOLD of the same person,
+# clearly closer than anyone else (FACE_MARGIN). Same person with face-api descriptors is
+# typically 0.3-0.5, different people above 0.6.
+FACE_FRAME_THRESHOLD = 0.5
+FACE_FRAMES_NEEDED = 2
+FACE_MARGIN = 0.06
+FACE_ENROLL_MIN, FACE_ENROLL_MAX = 3, 20
+FACE_ENROLL_SPREAD = 0.6  # every enrollment sample must be this close to their mean (one face)
 
 
 def _valid_descriptor(d):
@@ -48,6 +68,51 @@ def _valid_descriptor(d):
 
 def _face_distance(a, b):
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+
+def _mean_descriptor(samples):
+    return [sum(s[i] for s in samples) / len(samples) for i in range(128)]
+
+
+def _face_samples(stored_json):
+    """The enrolled samples (+ their mean) from face_descriptor_json: the v2 dict, or the old
+    single 128-number list (one sample)."""
+    try:
+        data = json.loads(stored_json)
+    except (TypeError, ValueError):
+        return []
+    if isinstance(data, dict) and isinstance(data.get("samples"), list):
+        out = [s for s in data["samples"] if _valid_descriptor(s)]
+        if _valid_descriptor(data.get("mean")):
+            out.append(data["mean"])
+        return out
+    return [data] if _valid_descriptor(data) else []
+
+
+def _face_frame_distance(frame, samples):
+    return min(_face_distance(frame, s) for s in samples)
+
+
+def _match_face_frames(frames, candidates):
+    """candidates: [(astronaut_row, samples)]. Returns the matching astronaut, or None. Each
+    frame's best and second-best person are found; a frame votes for its best person when
+    that's within FACE_FRAME_THRESHOLD and FACE_MARGIN closer than anyone else; the person
+    with at least FACE_FRAMES_NEEDED votes (or every frame, if fewer were sent) wins."""
+    votes, dists = {}, {}
+    for frame in frames:
+        ranked = sorted((_face_frame_distance(frame, samples), astro["id"], astro) for astro, samples in candidates if samples)
+        if not ranked:
+            return None
+        best_d, best_id, best = ranked[0]
+        second_d = ranked[1][0] if len(ranked) > 1 else 9.0
+        if best_d <= FACE_FRAME_THRESHOLD and second_d - best_d >= FACE_MARGIN:
+            votes[best_id] = votes.get(best_id, 0) + 1
+            dists.setdefault(best_id, (best, []))[1].append(best_d)
+    need = min(FACE_FRAMES_NEEDED, len(frames))
+    winners = [(n, -min(dists[i][1]), i) for i, n in votes.items() if n >= need]
+    if not winners:
+        return None
+    return dists[max(winners)[2]][0]
 
 
 def _login_response(astro):
@@ -99,10 +164,13 @@ def _compute_body_levels(conn, astro_id):
     (same logic astronaut_summary always used, factored out so
     /discomfort/report can reuse it without trusting a client-supplied level)."""
     today_levels = {}
+    eva_since = location.eva_since(conn, astro_id)
     for ind_row in conn.execute(
-        "SELECT indicator, level FROM readings WHERE astronaut_id = ? AND ts >= ? ORDER BY ts DESC",
+        "SELECT indicator, level, ts FROM readings WHERE astronaut_id = ? AND ts >= ? ORDER BY ts DESC",
         (astro_id, (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()),
     ):
+        if not location.counts(ind_row["indicator"], ind_row["ts"], eva_since):
+            continue
         if ind_row["indicator"] not in today_levels:
             today_levels[ind_row["indicator"]] = ind_row["level"]
     body_cfg = load_content()["body_parts"]
@@ -131,11 +199,14 @@ def _today_snapshot(conn, astro_id):
     Flight Surgeon's crew cards): latest reading per indicator, latest symptom report,
     and a single status -- the worst of those, or GRAY ("no data") when there's nothing."""
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    eva_since = location.eva_since(conn, astro_id)
     today = {}
     for r in conn.execute(
         "SELECT indicator, value_json, level, ts FROM readings WHERE astronaut_id = ? AND ts >= ? ORDER BY ts DESC",
         (astro_id, since),
     ):
+        if not location.counts(r["indicator"], r["ts"], eva_since):
+            continue  # a suit reading from outside the current spacewalk
         if r["indicator"] not in today:
             today[r["indicator"]] = {"value": json.loads(r["value_json"]), "level": r["level"], "ts": r["ts"]}
     sym = conn.execute(
@@ -155,6 +226,8 @@ def _today_snapshot(conn, astro_id):
     return {
         "today": today,
         "symptoms_today": symptoms_today,
+        "location": location.get(conn, astro_id),
+        "sensor": sensor_feed.status(astro_id),
         "status": status,
         "analysis": latest,
         "analysis_current": current,
@@ -272,7 +345,23 @@ def create_routes(app, socketio, bridge):
 
     @bp.post("/auth/face_login")
     def face_login():
-        descriptor = (request.get_json(force=True) or {}).get("descriptor")
+        """{descriptors: [1..10 frames]} (Face ID v2: several frames, voting) or the legacy
+        {descriptor: one frame} (the old 0.6 rule)."""
+        body = request.get_json(force=True) or {}
+        frames = body.get("descriptors")
+        if frames is not None:
+            if not isinstance(frames, list) or not 1 <= len(frames) <= 10 or not all(_valid_descriptor(f) for f in frames):
+                return jsonify({"error": "invalid face descriptors"}), 400
+            with db.write_conn() as conn:
+                rows = conn.execute("SELECT * FROM astronauts WHERE face_descriptor_json IS NOT NULL").fetchall()
+            if not rows:
+                return jsonify({"error": "no Face ID enrolled yet"}), 404
+            match = _match_face_frames(frames, [(r, _face_samples(r["face_descriptor_json"])) for r in rows])
+            if match is None:
+                return jsonify({"error": "face not recognized"}), 401
+            auth.login(match["id"])
+            return jsonify(_login_response(match))
+        descriptor = body.get("descriptor")
         if not _valid_descriptor(descriptor):
             return jsonify({"error": "invalid face descriptor"}), 400
         with db.write_conn() as conn:
@@ -285,7 +374,10 @@ def create_routes(app, socketio, bridge):
         # can't just assert "I'm astronaut 3" to log in as someone else.
         best, best_dist = None, None
         for astro in candidates:
-            dist = _face_distance(descriptor, json.loads(astro["face_descriptor_json"]))
+            samples = _face_samples(astro["face_descriptor_json"])
+            if not samples:
+                continue
+            dist = _face_frame_distance(descriptor, samples)
             if best_dist is None or dist < best_dist:
                 best, best_dist = astro, dist
         if best is None or best_dist > FACE_MATCH_THRESHOLD:
@@ -364,9 +456,21 @@ def create_routes(app, socketio, bridge):
 
     @bp.post("/astronauts/<int:astro_id>/face_id")
     def set_face_id(astro_id):
-        descriptor = (request.get_json(force=True) or {}).get("descriptor")
-        if not _valid_descriptor(descriptor):
-            return jsonify({"error": "invalid face descriptor"}), 400
+        """{descriptors: [3..20 samples]} (Face ID v2) or the legacy {descriptor}. Stored as
+        {"v": 2, "samples": [...], "mean": [...]}."""
+        body = request.get_json(force=True) or {}
+        samples = body.get("descriptors")
+        if samples is None:
+            samples = [body.get("descriptor")]
+            if not _valid_descriptor(samples[0]):
+                return jsonify({"error": "invalid face descriptor"}), 400
+        elif (not isinstance(samples, list) or not FACE_ENROLL_MIN <= len(samples) <= FACE_ENROLL_MAX
+              or not all(_valid_descriptor(s) for s in samples)):
+            return jsonify({"error": f"send {FACE_ENROLL_MIN}-{FACE_ENROLL_MAX} valid face samples"}), 400
+        mean = _mean_descriptor(samples)
+        if any(_face_distance(s, mean) > FACE_ENROLL_SPREAD for s in samples):
+            return jsonify({"error": "the samples don't look like one face -- only you in front of the camera, and try again"}), 400
+        descriptor = {"v": 2, "samples": samples, "mean": mean}
         with db.write_conn() as conn:
             ok, err = _authorize_self_or_superuser(conn, astro_id)
             if not ok:
@@ -500,8 +604,10 @@ def create_routes(app, socketio, bridge):
             "last_check": last_assessment["ts"] if last_assessment else None,
             "body_levels": body_levels,
             "discomfort": discomfort,
+            "sensor": sensor_feed.status(astro_id),
             "session_active": astro_id in sessions.active_sessions,
             "symptoms_today": snap["symptoms_today"],
+            "location": snap["location"],
         })
 
     @bp.get("/astronauts/<int:astro_id>/history")
@@ -555,7 +661,7 @@ def create_routes(app, socketio, bridge):
                 return jsonify(err[0]), err[1]
             if not conn.execute("SELECT 1 FROM astronauts WHERE id = ?", (astro_id,)).fetchone():
                 return jsonify({"error": "not found"}), 404
-        if not analyst.available():
+        if not analyst.configured():  # a short rate-limit back-off is waited out inside chat()
             return jsonify({"error": "AI is not available"}), 503
         _, profile = comms.current_profile()
         with db.write_conn() as conn:
@@ -607,7 +713,86 @@ def create_routes(app, socketio, bridge):
 
     @bp.get("/astronauts/<int:astro_id>/simulate_vitals")
     def simulate_vitals(astro_id):
-        return jsonify(health_rules.sample_vitals())
+        """Simulated sensors. On a spacewalk the suit's sensors are added too, and
+        ?problem=1 (the demo's "Simulate suit problem") makes them show real trouble."""
+        out = health_rules.sample_vitals()
+        with db.write_conn() as conn:
+            on_eva = location.eva_since(conn, astro_id) is not None
+        if on_eva or request.args.get("problem"):
+            out.update(health_rules.sample_suit(problem=bool(request.args.get("problem"))))
+        return jsonify(out)
+
+    # ---- where the astronaut is: inside, or outside on a spacewalk (EVA) ----
+    @bp.get("/astronauts/<int:astro_id>/location")
+    def get_location(astro_id):
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)
+            if err:
+                return jsonify(err[0]), err[1]
+            loc = location.get(conn, astro_id)
+        return jsonify({**loc, "mission_min": location.mission_minutes(loc["since"]) if loc["location"] == "eva" else 0,
+                        "time_scale": TIME_SCALE})
+
+    # Real spacewalk history (NASA EVA log, backend/logic/eva_history.py): static, open like /content.
+    @bp.get("/eva-history")
+    def get_eva_history():
+        return jsonify(eva_history.payload())
+
+    @bp.put("/astronauts/<int:astro_id>/location")
+    def put_location(astro_id):
+        body = request.get_json(force=True) or {}
+        loc = body.get("location")
+        if loc not in location.LOCATIONS:
+            return jsonify({"error": "location must be inside or eva"}), 400
+        with db.write_conn() as conn:
+            viewer, err = auth.authorize_view(conn, astro_id)
+            if err:
+                return jsonify(err[0]), err[1]
+            if viewer["id"] != astro_id:
+                return jsonify({"error": "only the astronaut can change this"}), 403
+            data = location.set(conn, astro_id, loc)
+        emit_fn("location_changed", {"astronaut_id": astro_id, **data})
+        analysis.request(astro_id, "location")
+        return jsonify(data)
+
+    # ---- the live wearable (backend/logic/sensor_feed.py): a real recorded crew session ----
+    @bp.get("/sensor/segments")
+    def sensor_segments():
+        return jsonify({"segments": sensor_feed.segments(), "source": sensor_feed.source()})
+
+    @bp.get("/astronauts/<int:astro_id>/sensor")
+    def get_sensor(astro_id):
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)
+            if err:
+                return jsonify(err[0]), err[1]
+        return jsonify(sensor_feed.status(astro_id) or {"on": False})
+
+    @bp.put("/astronauts/<int:astro_id>/sensor")
+    def put_sensor(astro_id):
+        """{"segment": "focus"|"multitask"|"startle"} starts a test, {"on": false} finishes it
+        and saves the results as the latest vitals + an assessment ({"on": false, "save":
+        false} cancels it instead). Only the astronaut wears it (the doctor watches)."""
+        body = request.get_json(force=True) or {}
+        with db.write_conn() as conn:
+            viewer, err = auth.authorize_view(conn, astro_id)
+            if err:
+                return jsonify(err[0]), err[1]
+            if viewer["id"] != astro_id:
+                return jsonify({"error": "only the astronaut can start or stop their monitor"}), 403
+        if body.get("on") is False:
+            result = sensor_feed.stop(astro_id, save=body.get("save", True) is not False)
+            if result:  # finished and saved: same broadcasts as a test that ran to its end
+                sensor_feed.announce_finished(result, emit_fn, lambda a: analysis.request(a, "wearable", delay=0))
+                return jsonify({"on": False, "finished": True, "result": result})
+            emit_fn("sensor_changed", {"astronaut_id": astro_id, "on": False})
+            return jsonify({"on": False, "finished": False})
+        try:
+            data = sensor_feed.start(astro_id, body.get("segment"))
+        except ValueError:
+            return jsonify({"error": "segment must be one of: " + ", ".join(s["id"] for s in sensor_feed.segments())}), 400
+        emit_fn("sensor_changed", {"astronaut_id": astro_id, "on": True})
+        return jsonify(data)
 
     @bp.post("/astronauts/<int:astro_id>/assess")
     def assess(astro_id):
@@ -619,6 +804,11 @@ def create_routes(app, socketio, bridge):
                 spo2 = -1
             if not 0 < spo2 <= 100:
                 return jsonify({"error": "oxygen_saturation must be a percentage between 0 and 100"}), 400
+        for key, lo, hi in (("suit_co2", 0, 15), ("suit_pressure", 0, 6), ("suit_o2", 0, 100)):
+            if key in body:
+                v = body[key]
+                if not isinstance(v, (int, float)) or isinstance(v, bool) or not lo <= v <= hi:
+                    return jsonify({"error": f"{key} must be a number from {lo} to {hi}"}), 400
         now = datetime.now(timezone.utc)
         levels = []
         details = {}
@@ -655,6 +845,10 @@ def create_routes(app, socketio, bridge):
             if "oxygen_saturation" in body:
                 v = float(body["oxygen_saturation"])
                 record("oxygen_saturation", v, health_rules.evaluate("oxygen_saturation", v))
+            for key in ("suit_co2", "suit_pressure", "suit_o2"):  # spacewalk suit sensors
+                if key in body:
+                    v = float(body[key])
+                    record(key, v, health_rules.evaluate(key, v))
 
             # Fold in whatever the CYD already reported today (sleep, mood, reaction, symptoms).
             # indicator_levels tracks every indicator considered for this assessment (name,
@@ -1027,6 +1221,58 @@ def create_routes(app, socketio, bridge):
     # ---- Mental Health tab: mood check-in + journal ----
     MOOD_SCORES = {"rough": 1, "low": 2, "okay": 3, "good": 4, "great": 5}
 
+    # ---- the daily mood check (backend/logic/mood_check.py): 3 questions, judged by the AI ----
+    @bp.get("/astronauts/<int:astro_id>/mood-check")
+    def get_mood_check(astro_id):
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)
+            if err:
+                return jsonify(err[0]), err[1]
+            today = mood_check.today_result(conn, astro_id)
+        day = mood_check.mission_day()
+        return jsonify({"day": day + 1, "day_index": day, "questions": mood_check.questions_for(astro_id, day),
+                        "today": today})
+
+    @bp.post("/astronauts/<int:astro_id>/mood-check")
+    def post_mood_check(astro_id):
+        """{answers: [3 strings or {text}], day_index?, talk_id?}. The astronaut themself only:
+        it's their voice and their words. Judged by the AI (or the fallback), saved as a mood
+        reading."""
+        if auth.current_astronaut_id() is None:
+            return jsonify({"error": "not logged in"}), 401
+        if auth.current_astronaut_id() != astro_id:
+            return jsonify({"error": "only the astronaut can take their own mood check"}), 403
+        body = request.get_json(force=True) or {}
+        today = mood_check.mission_day()
+        day = body.get("day_index", today)
+        if not isinstance(day, int) or isinstance(day, bool) or day not in (today, today - 1):
+            day = today  # a check started just before the mission day rolled over keeps its questions
+        answers, err_msg = mood_check.clean_answers(body.get("answers"), mood_check.questions_for(astro_id, day))
+        if err_msg:
+            return jsonify({"error": err_msg}), 400
+        talk_id = body.get("talk_id") or None
+        tone = None
+        if talk_id:
+            if not isinstance(talk_id, str) or not _TALK_ID.fullmatch(talk_id):
+                return jsonify({"error": "bad talk id"}), 400
+            with db.write_conn() as conn:
+                talk = voice_talks.get(conn, talk_id)
+                if not talk or talk["astronaut_id"] != astro_id:
+                    return jsonify({"error": "not your conversation"}), 403
+                voice_talks.finish(conn, talk_id, reason="mood check")
+                tone = voice_talks.aggregate(conn, talk_id)
+        verdict = mood_check.judge(answers, tone)  # the AI call: outside any DB lock
+        if verdict["source"] != "ai":
+            print(f"[astra] mood check judged by the rules: {verdict.get('error')}", flush=True)
+        with db.write_conn() as conn:
+            if not conn.execute("SELECT 1 FROM astronauts WHERE id = ?", (astro_id,)).fetchone():
+                return jsonify({"error": "not found"}), 404
+            result = mood_check.save(conn, astro_id, verdict, answers, tone, talk_id)
+        analysis.request(astro_id, "mood", delay=0)
+        emit_fn("cyd_event", {"type": "mood", "astronaut_id": astro_id, "mood": result["mood"], "level": result["level"]})
+        emit_fn("mood_check", {"astronaut_id": astro_id, "mood": result["mood"]})
+        return jsonify(result)
+
     @bp.post("/astronauts/<int:astro_id>/mood")
     def log_mood(astro_id):
         body = request.get_json(force=True) or {}
@@ -1095,6 +1341,314 @@ def create_routes(app, socketio, bridge):
             entry_id = cur.lastrowid
         return jsonify({"ok": True, "id": entry_id, "title": title, "body": entry_body, "created_at": now})
 
+    # ---- "Wanna talk?" voice tone estimates (backend/services/emotion.py) ----
+    # The browser records one phrase at a time from Astra's shared microphone and POSTs it
+    # here as a 16 kHz WAV. It's analysed on this laptop, in memory, and dropped; only the
+    # scores are saved, in their own `voice_tone` table (never `readings` / mood).
+    @bp.get("/voice-tone/status")
+    def voice_tone_status():
+        return jsonify(emotion.status())
+
+    @bp.post("/astronauts/<int:astro_id>/voice-tone")
+    def add_voice_tone(astro_id):
+        # Only the astronaut themself (not the surgeon on their behalf): it's their voice.
+        if auth.current_astronaut_id() is None:
+            return jsonify({"error": "not logged in"}), 401
+        if auth.current_astronaut_id() != astro_id:
+            return jsonify({"error": "forbidden"}), 403
+        talk_id = request.args.get("talk") or ""
+        if not _TALK_ID.fullmatch(talk_id):
+            return jsonify({"error": "talk id required"}), 400
+        with db.write_conn() as conn:
+            ok, status, msg = voice_talks.accepts_phrases(voice_talks.get(conn, talk_id), astro_id)
+        if not ok:
+            return jsonify({"error": msg}), status
+        if (request.content_length or 0) > emotion.MAX_WAV_BYTES:
+            return jsonify({"error": "audio too large"}), 413
+        try:
+            # Outside the DB write lock: inference takes up to ~1 s.
+            result = emotion.analyze_wav(request.get_data(cache=False))
+        except emotion.Unavailable as e:
+            return jsonify({"error": "voice tone analysis unavailable", "reason": str(e)}), 503
+        except emotion.ToneError as e:
+            return jsonify({"error": str(e)}), 400
+        now = datetime.now(timezone.utc).isoformat()
+        with db.write_conn() as conn:
+            if not conn.execute("SELECT 1 FROM astronauts WHERE id = ?", (astro_id,)).fetchone():
+                return jsonify({"error": "not found"}), 404
+            # re-checked inside the write: a finish may have landed during the inference
+            ok, status, msg = voice_talks.accepts_phrases(voice_talks.get(conn, talk_id), astro_id)
+            if not ok:
+                return jsonify({"error": msg}), status
+            voice_talks.touch(conn, talk_id)
+            cur = conn.execute(
+                "INSERT INTO voice_tone (astronaut_id, ts, talk_id, label, confidence, scores_json, duration_s, model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (astro_id, now, talk_id, result["label"], result["confidence"], json.dumps(result["scores"]),
+                 result["duration_s"], f"{emotion.MODEL_ID}@{emotion.MODEL_REVISION[:12]}"),
+            )
+            row_id = cur.lastrowid
+        out = {"id": row_id, "ts": now, "talk_id": talk_id, **result}
+        emit_fn("voice_tone", {"astronaut_id": astro_id, "id": row_id, "talk_id": talk_id})
+        return jsonify(out)
+
+    # ---- "Wanna talk?" conversations (backend/logic/voice_talks.py) ----
+    def _own_talk(astro_id, talk_id=None):
+        if auth.current_astronaut_id() is None:
+            return None, (jsonify({"error": "not logged in"}), 401)
+        if auth.current_astronaut_id() != astro_id:
+            return None, (jsonify({"error": "forbidden"}), 403)
+        if talk_id is not None and not _TALK_ID.fullmatch(talk_id):
+            return None, (jsonify({"error": "bad conversation id"}), 400)
+        return True, None
+
+    @bp.post("/astronauts/<int:astro_id>/voice-talks")
+    def open_voice_talk(astro_id):
+        _, err = _own_talk(astro_id)
+        if err:
+            return err
+        if not emotion.is_ready():
+            return jsonify({"error": "voice tone analysis unavailable", "reason": emotion.status()["reason"]}), 503
+        with db.write_conn() as conn:
+            if not conn.execute("SELECT 1 FROM astronauts WHERE id = ?", (astro_id,)).fetchone():
+                return jsonify({"error": "not found"}), 404
+            kind = (request.get_json(silent=True) or {}).get("kind", "talk")
+            talk = voice_talks.create(conn, astro_id, kind)
+        return jsonify(voice_talks.public(talk)), 201
+
+    def _talk_body_int(body, key):
+        try:
+            return max(0, min(10000, int(body.get(key) or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    @bp.post("/astronauts/<int:astro_id>/voice-talks/<talk_id>/close")
+    def close_voice_talk(astro_id, talk_id):
+        _, err = _own_talk(astro_id, talk_id)
+        if err:
+            return err
+        body = request.get_json(silent=True) or {}
+        with db.write_conn() as conn:
+            talk = voice_talks.get(conn, talk_id)
+            if not talk or talk["astronaut_id"] != astro_id:
+                return jsonify({"error": "unknown conversation"}), 404
+            talk = voice_talks.close(conn, talk_id, _talk_body_int(body, "phrases_sent"))
+        emit_fn("voice_talk", {"astronaut_id": astro_id, "talk_id": talk_id, "status": talk["status"]})
+        return jsonify(voice_talks.public(talk))
+
+    @bp.post("/astronauts/<int:astro_id>/voice-talks/<talk_id>/finish")
+    def finish_voice_talk(astro_id, talk_id):
+        _, err = _own_talk(astro_id, talk_id)
+        if err:
+            return err
+        body = request.get_json(silent=True) or {}
+        with db.write_conn() as conn:
+            talk = voice_talks.get(conn, talk_id)
+            if not talk or talk["astronaut_id"] != astro_id:
+                return jsonify({"error": "unknown conversation"}), 404
+            talk = voice_talks.finish(conn, talk_id, _talk_body_int(body, "phrases_sent"),
+                                      _talk_body_int(body, "phrases_skipped"), _talk_body_int(body, "phrases_failed"))
+        emit_fn("voice_talk", {"astronaut_id": astro_id, "talk_id": talk_id, "status": talk["status"]})
+        return jsonify(voice_talks.public(talk))
+
+    @bp.get("/astronauts/<int:astro_id>/voice-talks/latest")
+    def latest_voice_talk(astro_id):
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)  # the astronaut + the flight surgeon
+            if err:
+                return jsonify(err[0]), err[1]
+            talk = voice_talks.latest(conn, astro_id)
+        return jsonify({"talk": talk})
+
+    # ---- Face Analysis (backend/services/face.py): webcam frames analysed on THIS laptop ----
+    # Frames arrive one at a time, are measured in memory and dropped; only the final report
+    # is stored (face_analyses). Recording is for the astronaut themself only.
+    @bp.get("/face/status")
+    def face_status():
+        return jsonify({**face.status(), "window_s": FACE_WINDOW_S, "fps": FACE_FPS})
+
+    def _own(astro_id):
+        if auth.current_astronaut_id() is None:
+            return jsonify({"error": "not logged in"}), 401
+        if auth.current_astronaut_id() != astro_id:
+            return jsonify({"error": "forbidden"}), 403
+        return None
+
+    @bp.post("/astronauts/<int:astro_id>/face/sessions")
+    def face_start(astro_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        try:
+            sid = face.start_session(astro_id)
+        except face.Unavailable as e:
+            return jsonify({"error": "face analysis unavailable", "reason": str(e)}), 503
+        except face.FaceError as e:
+            return jsonify({"error": str(e)}), 409
+        return jsonify({"session_id": sid, "window_s": FACE_WINDOW_S, "fps": FACE_FPS}), 201
+
+    @bp.post("/astronauts/<int:astro_id>/face/sessions/<session_id>/frames")
+    def face_frame(astro_id, session_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        if (request.content_length or 0) > face.MAX_FRAME_BYTES:
+            return jsonify({"error": "frame too large"}), 413
+        try:
+            t_ms = int(float(request.args.get("t", "0")))
+        except ValueError:
+            return jsonify({"error": "bad timestamp"}), 400
+        try:
+            out = face.add_frame(session_id, astro_id, request.get_data(cache=False), t_ms)
+        except face.FaceError as e:
+            return jsonify({"error": str(e)}), 400
+        if out is None:
+            return jsonify({"error": "unknown or expired session"}), 404
+        return jsonify(out)
+
+    @bp.post("/astronauts/<int:astro_id>/face/sessions/<session_id>/finish")
+    def face_finish(astro_id, session_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        try:
+            report = face.finish(session_id, astro_id)
+        except face.FaceError as e:
+            return jsonify({"error": str(e)}), 400
+        if report is None:
+            return jsonify({"error": "unknown or expired session"}), 404
+        now = datetime.now(timezone.utc).isoformat()
+        q = report["quality"]
+        with db.write_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO face_analyses (astronaut_id, ts, duration_s, frames, usable_frames, quality, report_json, model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (astro_id, now, q["duration_s"], q["frames"], q["usable_frames"], q["rating"], json.dumps(report), report["model"]),
+            )
+            row_id = cur.lastrowid
+        emit_fn("face_analysis", {"astronaut_id": astro_id, "id": row_id})
+        return jsonify({"id": row_id, "ts": now, **report})
+
+    @bp.post("/astronauts/<int:astro_id>/face/sessions/<session_id>/cancel")
+    def face_cancel(astro_id, session_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        return jsonify({"cancelled": face.cancel(session_id, astro_id)})
+
+    @bp.get("/astronauts/<int:astro_id>/face/latest")
+    def face_latest(astro_id):
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)  # the astronaut + the flight surgeon
+            if err:
+                return jsonify(err[0]), err[1]
+            r = conn.execute("SELECT id, ts, report_json FROM face_analyses WHERE astronaut_id = ? ORDER BY id DESC LIMIT 1",
+                             (astro_id,)).fetchone()
+        if not r:
+            return jsonify({"analysis": None})
+        return jsonify({"analysis": {"id": r["id"], "ts": r["ts"], **json.loads(r["report_json"])}})
+
+    # ---- Pose Analysis (backend/services/pose.py): webcam frames analysed on THIS laptop ----
+    # Same shape as Face Analysis, fully separate from it: frames are measured in memory and
+    # dropped; only the final report is stored (pose_analyses). Self-only capture.
+    @bp.get("/pose/status")
+    def pose_status():
+        return jsonify({**pose.status(), "window_s": POSE_WINDOW_S, "fps": POSE_FPS})
+
+    @bp.post("/astronauts/<int:astro_id>/pose/sessions")
+    def pose_start(astro_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        try:
+            sid = pose.start_session(astro_id)
+        except pose.Unavailable as e:
+            return jsonify({"error": "pose analysis unavailable", "reason": str(e)}), 503
+        except pose.PoseError as e:
+            return jsonify({"error": str(e)}), 409
+        return jsonify({"session_id": sid, "window_s": POSE_WINDOW_S, "fps": POSE_FPS}), 201
+
+    @bp.post("/astronauts/<int:astro_id>/pose/sessions/<session_id>/frames")
+    def pose_frame(astro_id, session_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        if (request.content_length or 0) > pose.MAX_FRAME_BYTES:
+            return jsonify({"error": "frame too large"}), 413
+        try:
+            t_ms = int(float(request.args.get("t", "0")))
+        except ValueError:
+            return jsonify({"error": "bad timestamp"}), 400
+        try:
+            out = pose.add_frame(session_id, astro_id, request.get_data(cache=False), t_ms)
+        except pose.PoseError as e:
+            return jsonify({"error": str(e)}), 400
+        if out is None:
+            return jsonify({"error": "unknown or expired session"}), 404
+        return jsonify(out)
+
+    @bp.post("/astronauts/<int:astro_id>/pose/sessions/<session_id>/finish")
+    def pose_finish(astro_id, session_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        try:
+            report = pose.finish(session_id, astro_id)
+        except pose.PoseError as e:
+            return jsonify({"error": str(e)}), 400
+        if report is None:
+            return jsonify({"error": "unknown or expired session"}), 404
+        now = datetime.now(timezone.utc).isoformat()
+        q = report["quality"]
+        with db.write_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO pose_analyses (astronaut_id, ts, duration_s, frames, usable_frames, quality, report_json, model) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (astro_id, now, q["duration_s"], q["frames"], q["usable_frames"], q["rating"], json.dumps(report), report["model"]),
+            )
+            row_id = cur.lastrowid
+        emit_fn("pose_analysis", {"astronaut_id": astro_id, "id": row_id})
+        return jsonify({"id": row_id, "ts": now, **report})
+
+    @bp.post("/astronauts/<int:astro_id>/pose/sessions/<session_id>/cancel")
+    def pose_cancel(astro_id, session_id):
+        err = _own(astro_id)
+        if err:
+            return err
+        return jsonify({"cancelled": pose.cancel(session_id, astro_id)})
+
+    @bp.get("/astronauts/<int:astro_id>/pose/latest")
+    def pose_latest(astro_id):
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)  # the astronaut + the flight surgeon
+            if err:
+                return jsonify(err[0]), err[1]
+            r = conn.execute("SELECT id, ts, report_json FROM pose_analyses WHERE astronaut_id = ? ORDER BY id DESC LIMIT 1",
+                             (astro_id,)).fetchone()
+        if not r:
+            return jsonify({"analysis": None})
+        return jsonify({"analysis": {"id": r["id"], "ts": r["ts"], **json.loads(r["report_json"])}})
+
+    @bp.get("/astronauts/<int:astro_id>/voice-tone")
+    def get_voice_tone(astro_id):
+        try:
+            days = max(1, min(30, int(request.args.get("days", 7))))
+        except ValueError:
+            days = 7
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with db.write_conn() as conn:
+            _, err = auth.authorize_view(conn, astro_id)  # the astronaut + the flight surgeon, like the journal
+            if err:
+                return jsonify(err[0]), err[1]
+            data = rows(conn.execute(
+                "SELECT id, ts, talk_id, label, confidence, scores_json, duration_s FROM voice_tone "
+                "WHERE astronaut_id = ? AND ts >= ? ORDER BY ts",
+                (astro_id, since),
+            ).fetchall())
+        for r in data:
+            r["scores"] = json.loads(r.pop("scores_json"))
+        return jsonify(data)
+
     # ---- Sleep Lab tab: manual sleep entry (the CYD-reported path already
     # writes indicator='sleep' readings too; this just gives the web app its
     # own way in, same relationship /assess's manual vitals have to the CYD) ----
@@ -1154,7 +1708,7 @@ def create_routes(app, socketio, bridge):
                     "session_active": a["id"] in sessions.active_sessions,
                     # Crew overview cards: today's status, latest vitals, flags.
                     "status": snap["status"], "today": snap["today"], "symptoms_today": snap["symptoms_today"],
-                    "analysis": snap["analysis"],
+                    "analysis": snap["analysis"], "location": snap["location"],
                     "open_alert": row(open_alert), "last_reading": last_reading,
                 })
         return jsonify(out)
@@ -1316,7 +1870,7 @@ def create_routes(app, socketio, bridge):
         emit_fn("mission_changed", {"profile_id": profile_id, "profile": profile})
         return jsonify({"profile_id": profile_id, "profile": profile})
 
-    # ---- content / learn ----
+    # ---- content ----
     @bp.get("/content")
     def content():
         return jsonify(load_content())
@@ -1333,7 +1887,18 @@ def create_routes(app, socketio, bridge):
             _, err = auth.authorize_view(conn, astro_id)
             if err:
                 return jsonify(err[0]), err[1]
-            return jsonify(scheduler.day_plan(conn, astro_id))
+            plan = scheduler.day_plan(conn, astro_id)
+        # Is sleep or a workout being tracked right now (tag, voice or the Today page)? The
+        # Today page shows Start or Stop from this.
+        tracking = {}
+        for kind in ("sleep", "exercise"):
+            key = sessions.running_toggle(astro_id, kind)
+            info = sessions.open_toggles.get(key) if key else None
+            tracking[kind] = None if not info else {
+                "started_at": info["started_iso"],
+                "mission_min": round((time.time() - info["started_at"]) * TIME_SCALE / 60),
+            }
+        return jsonify({**plan, "tracking": tracking})
 
     # ---- crew-wide status board: a shared station display, not a personal
     # dashboard (docs/CLAUDE.md "crew-wide status board"). Deliberately
@@ -1377,6 +1942,60 @@ def create_routes(app, socketio, bridge):
     def health_rules_config():
         from backend.config import health_rules as load_health_rules
         return jsonify(load_health_rules())
+
+    # ---- crew records (backend/logic/records.py): the flight surgeon or a superuser ----
+    def _records_access(conn):
+        """A superuser, or a signed-in flight surgeon. (None, None) when allowed, else an error."""
+        su, _ = admin_auth.authorize_superuser(conn)
+        if su is not None:
+            return None
+        _, err = auth.authorize_surgeon(conn)
+        return err
+
+    RECORDS_PAGE_ROWS = 500
+
+    @bp.get("/records")
+    def get_records():
+        """The Records page: the daily summary + each section's rows (the newest
+        RECORDS_PAGE_ROWS) with totals. Same filters as the Excel export."""
+        f = records.parse_filters(request.args)
+        with db.write_conn() as conn:
+            err = _records_access(conn)
+            if err:
+                return jsonify(err[0]), err[1]
+            crew = [{"id": r["id"], "name": r["name"], "role": r["role"]}
+                    for r in conn.execute("SELECT id, name, role FROM astronauts ORDER BY id")]
+            sections = records.collect(conn, f)
+            daily = records.daily_summary(conn, f)
+
+        def jsonable(row):
+            return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items() if k != "astronaut_id"}
+        out = []
+        for sid, title, cat, columns in records.SECTIONS:
+            if sid not in sections:
+                continue
+            rows = sections[sid]
+            out.append({"id": sid, "title": title, "category": cat, "total": len(rows),
+                        "columns": [{"key": k, "label": label, "kind": kind} for k, label, kind in columns],
+                        "rows": [jsonable(r) for r in reversed(rows[-RECORDS_PAGE_ROWS:])]})
+        return jsonify({"filters": f.public(), "crew": crew,
+                        "daily": {"columns": [{"key": k, "label": label, "kind": kind} for k, label, kind in records.DAILY_COLUMNS],
+                                  "rows": [jsonable(r) for r in daily]},
+                        "sections": out})
+
+    @bp.get("/records/export.xlsx")
+    def export_records():
+        f = records.parse_filters(request.args)
+        with db.write_conn() as conn:
+            err = _records_access(conn)
+            if err:
+                return jsonify(err[0]), err[1]
+            names = list(records._astronauts(conn, f).values())
+            sections = records.collect(conn, f)
+            daily = records.daily_summary(conn, f)
+        data = excel_export.build(f, names, sections, daily)
+        return Response(data, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename={excel_export.filename(f)}"})
 
     # ---- export ----
     @bp.get("/export/<int:astro_id>.csv")

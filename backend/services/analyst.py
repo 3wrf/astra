@@ -30,9 +30,12 @@ MAX_REPLY = 600          # the chat's spoken limit too (frontend useVoice speaks
 CHAT_MAX_TOKENS = 900
 CHAT_BUDGET_S = 22       # a whole chat turn, retries included (the page gives up at 30 s)
 MIN_RETRY_S = 5
+CHAT_WAIT_MARGIN_S = 6   # a rate-limit wait must leave at least this long for the answer itself
 MAX_ITEM = 160
 
-_backoff_until = 0.0
+_backoff_until = 0.0     # after a network failure: wait before trying the AI at all
+_model_backoff = {}      # model -> time it's free again after a 429 (rate limit)
+_last_model = None       # the model that gave the latest answer (shown as "Analyzed by AI · …")
 
 
 class AnalystError(Exception):
@@ -43,12 +46,72 @@ class MalformedOutputError(AnalystError):
     """The model answered, but not with valid JSON in the expected shape (retried once)."""
 
 
+class RateLimitError(AnalystError):
+    """The AI said "too many tokens right now" (HTTP 429). wait: seconds until it's free."""
+
+    def __init__(self, message, wait):
+        super().__init__(message)
+        self.wait = wait
+
+
+def _seconds(text):
+    """Groq's reset times: "585ms", "7.66s", "1m26.4s" (also a plain Retry-After "12")."""
+    if not text:
+        return None
+    text = str(text).strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    total, num = 0.0, ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch.isdigit() or ch == ".":
+            num += ch
+        elif text.startswith("ms", i):
+            total += float(num or 0) / 1000; num = ""; i += 1
+        elif ch in "hms":
+            total += float(num or 0) * {"h": 3600, "m": 60, "s": 1}[ch]; num = ""
+        else:
+            return None
+        i += 1
+    return total if not num else None
+
+
+def _rate_wait(headers):
+    """How long to wait after a 429: Retry-After, else Groq's token-bucket reset time. The free
+    plan's per-minute token allowance refills continuously, so this is usually a few seconds --
+    sitting out a whole minute (the old fixed back-off) left Astra silent for no reason."""
+    if headers:
+        for name in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+            wait = _seconds(headers.get(name))
+            if wait is not None:
+                return wait
+    return BACKOFF_S
+
+
+def _models():
+    return [config.AI_MODEL, *config.AI_FALLBACK_MODELS]
+
+
+def _free_models(now=None):
+    now = time.time() if now is None else now
+    return [m for m in _models() if _model_backoff.get(m, 0) <= now]
+
+
 def available():
-    return config.ai_api_key() is not None and time.time() >= _backoff_until
+    return config.ai_api_key() is not None and time.time() >= _backoff_until and bool(_free_models())
+
+
+def configured():
+    """There's a key. (available() also needs no back-off running; Astra's chat waits a short
+    back-off out instead, so its route only needs this.)"""
+    return config.ai_api_key() is not None
 
 
 def model_name():
-    return config.AI_MODEL
+    return _last_model or config.AI_MODEL
 
 
 def _system_prompt(cfg):
@@ -70,18 +133,35 @@ def _system_prompt(cfg):
 
 
 def _call_once(messages, max_tokens=MAX_TOKENS, timeout=TIMEOUT_S):
+    """One answer from the first model that isn't rate-limited (AI_MODEL, then the fallbacks).
+    Raises RateLimitError (wait = until the first one is free) when every model is limited."""
+    global _last_model
+    if not config.ai_api_key():
+        raise AnalystError("no AI API key configured")
+    limited = None
+    for model in _free_models():
+        try:
+            out = _call_model(model, messages, max_tokens, timeout)
+        except RateLimitError as exc:
+            limited = exc
+            continue  # this model's allowance is used up for now: try the next one
+        _last_model = model
+        return out
+    soonest = min((_model_backoff.get(m, 0) for m in _models()), default=0) - time.time()
+    raise RateLimitError(str(limited) if limited else "AI rate limit reached", max(soonest, 1))
+
+
+def _call_model(model, messages, max_tokens, timeout):
     global _backoff_until
     key = config.ai_api_key()
-    if not key:
-        raise AnalystError("no AI API key configured")
     payload = {
-        "model": config.AI_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
-    if config.AI_MODEL.startswith("openai/gpt-oss"):
+    if model.startswith("openai/gpt-oss"):
         payload["reasoning_effort"] = "low"  # gpt-oss thinks first; keep it short and fast
     req = urllib.request.Request(
         f"{config.AI_BASE_URL}/chat/completions",
@@ -97,13 +177,14 @@ def _call_once(messages, max_tokens=MAX_TOKENS, timeout=TIMEOUT_S):
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
-            retry = exc.headers.get("retry-after") if exc.headers else None
+            wait = min(max(_rate_wait(exc.headers), 1), 600)
+            _model_backoff[model] = time.time() + wait
             try:
-                wait = float(retry)
-            except (TypeError, ValueError):
-                wait = BACKOFF_S
-            _backoff_until = time.time() + min(max(wait, 5), 600)
-            raise AnalystError("AI rate limit reached") from exc
+                why = json.loads(exc.read().decode("utf-8", "replace")).get("error", {}).get("message", "")
+            except Exception:
+                why = ""
+            print(f"[astra] AI rate limit on {model} (HTTP 429): free again in {wait:.0f} s. {why[:200]}", flush=True)
+            raise RateLimitError("AI rate limit reached", wait) from exc
         if exc.code in (401, 403):
             raise AnalystError("AI key was rejected") from exc
         if exc.code == 400:
@@ -220,7 +301,7 @@ def analyze(context_text, indicator_ids, cfg=None):
 
 # ---------------------------------------------------------------- Astra, the crew's chat
 
-PAGES = ("overview", "body", "trends", "mind", "sleep", "mission", "exercise", "schedule", "learn")
+PAGES = ("overview", "body", "trends", "mind", "sleep", "mission", "exercise", "schedule")
 EXERCISE_IDS = ("t2", "cevis", "ared", "stretch")
 MOODS = ("rough", "low", "okay", "good", "great")
 MAX_ACTIONS = 4
@@ -260,6 +341,7 @@ def _chat_prompt(cfg, symptom_ids=(), guide_ids=()):
         '- {"type": "alert_surgeon", "text": "<short message for the flight surgeon>"} (urgent: something is wrong)\n'
         '- {"type": "message_surgeon", "text": "<their message, in their words>"} (a normal, non-urgent message)\n'
         '- {"type": "send_summary", "period": "today" or "week"} (a health summary report to the flight surgeon)\n'
+        '- {"type": "set_location", "location": "eva" or "inside"} (going outside on a spacewalk / back inside the station)\n'
         '- {"type": "start_sleep"} / {"type": "stop_sleep"} (going to bed / woke up: sleep tracking)\n'
         '- {"type": "start_workout", "exercise": optional one of "t2" (treadmill), "cevis" (cycling), "ared" (resistance/weights), '
         '"stretch"} / {"type": "stop_workout"} (workout tracking; name the exercise when they say which one. '
@@ -297,6 +379,8 @@ def _chat_prompt(cfg, symptom_ids=(), guide_ids=()):
         '"actions": [{"type": "message_surgeon", "text": "I slept well and feel fine."}]}\n'
         '"start my treadmill run" -> {"reply": "Should I start your T2 treadmill session?", "actions": [{"type": "start_workout", "exercise": "t2"}]}\n'
         '"I\'m going to bed" -> {"reply": "Should I start your sleep tracking? Good night.", "actions": [{"type": "start_sleep"}]}\n'
+        '"I\'m heading out for my spacewalk" -> {"reply": "Should I switch you to EVA mode? I\'ll watch your suit readings.", '
+        '"actions": [{"type": "set_location", "location": "eva"}]}\n'
         '"how do I measure my blood pressure?" -> {"reply": "Let\'s do it step by step.", "actions": [{"type": "measure_guide", "indicator": "blood_pressure"}]}\n'
         '"my left knee has hurt since Tuesday" -> {"reply": "I\'ll remember that and check on it later. How bad is it, from 0 to 10?", '
         '"actions": [{"type": "remember", "text": "Left knee has hurt since Tuesday", "follow_up_hours": 6}]}'
@@ -370,6 +454,8 @@ def _clean_action(a, symptom_ids, guide_ids=()):
     if kind == "message_surgeon":
         text = a.get("text") if isinstance(a.get("text"), str) else ""
         return {"type": kind, "text": text.strip()[:MAX_MESSAGE]} if text.strip() else None
+    if kind == "set_location":
+        return {"type": kind, "location": a["location"]} if a.get("location") in ("inside", "eva") else None
     if kind == "send_summary":
         return {"type": kind, "period": a["period"]} if a.get("period") in SUMMARY_PERIODS else None
     if kind == "start_workout" and a.get("exercise") in EXERCISE_IDS:
@@ -431,8 +517,18 @@ def chat(context_text, history, message, symptom_ids=(), cfg=None, can_act=True,
     """One Astra chat turn. history: [{"role": "user"|"assistant", "content": str}, ...]
     (already sanitized by the route). can_act=False (the surgeon asking about a crew
     member): she answers but never offers or returns actions. Raises AnalystError."""
-    if not available():
-        raise AnalystError("AI is not configured or is cooling down after an error")
+    if config.ai_api_key() is None:
+        raise AnalystError("AI is not configured")
+    # The whole turn (waits, first answer and any retry) must fit CHAT_BUDGET_S, so a slow or
+    # busy AI can never leave the astronaut on "Thinking…" for a minute.
+    deadline = time.monotonic() + CHAT_BUDGET_S
+    # A short rate-limit pause is waited out, not turned into "I couldn't reach my AI": the free
+    # plan allows ~2 replies a minute, and a spoken conversation goes faster than that.
+    wait = _backoff_until - time.time()
+    if wait > 0:
+        if wait > CHAT_BUDGET_S - CHAT_WAIT_MARGIN_S:
+            raise AnalystError("AI is cooling down after an error")
+        time.sleep(wait)
     cfg = cfg or config.ai_analyst()
     system = _chat_prompt(cfg, symptom_ids, guide_ids) + ("" if can_act else _NO_ACTIONS_NOTE)
     messages = [
@@ -440,14 +536,18 @@ def chat(context_text, history, message, symptom_ids=(), cfg=None, can_act=True,
         *history,
         {"role": "user", "content": message},
     ]
-    # The whole turn (first answer + any retry) must fit CHAT_BUDGET_S, so a slow AI can never
-    # leave the astronaut on "Thinking…" for a minute: a retry only happens if there's time.
-    deadline = time.monotonic() + CHAT_BUDGET_S
 
     def left():
         return deadline - time.monotonic()
 
-    raw = _call_once(messages, max_tokens=CHAT_MAX_TOKENS, timeout=min(TIMEOUT_S, CHAT_BUDGET_S))
+    try:
+        raw = _call_once(messages, max_tokens=CHAT_MAX_TOKENS, timeout=min(TIMEOUT_S, left()))
+    except RateLimitError as busy:
+        if busy.wait > left() - CHAT_WAIT_MARGIN_S:
+            raise
+        print(f"[astra] AI busy (rate limit): waiting {busy.wait:.1f} s, then answering", flush=True)
+        time.sleep(busy.wait)
+        raw = _call_once(messages, max_tokens=CHAT_MAX_TOKENS, timeout=min(TIMEOUT_S, left()))
     try:
         out = parse_chat(raw, symptom_ids, guide_ids)
     except MalformedOutputError as first:
@@ -511,3 +611,58 @@ def summary(context_text, period, cfg=None):
     if not isinstance(out, str) or not out.strip():
         raise MalformedOutputError("no summary in the answer")
     return " ".join(out.split())[:MAX_REPLY]
+
+
+# ---- the daily mood check (backend/logic/mood_check.py) ----
+MOODS = ("rough", "low", "okay", "good", "great")
+MOOD_CHECK_MAX_TOKENS = 600
+MAX_MOOD_SUMMARY = 240
+
+
+def parse_mood_check(raw):
+    """{"mood", "summary", "emotions"} from the model's answer, validated. Raises
+    MalformedOutputError on anything unusable."""
+    text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        data = json.loads(text[start:end + 1]) if start != -1 and end != -1 else None
+    except json.JSONDecodeError:
+        data = None
+    if not isinstance(data, dict):
+        raise MalformedOutputError("mood check answer is not a JSON object")
+    mood = data.get("mood")
+    if not isinstance(mood, str) or mood.strip().lower() not in MOODS:
+        raise MalformedOutputError(f"mood must be one of {', '.join(MOODS)}")
+    summary = data.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise MalformedOutputError("no summary")
+    emotions = data.get("emotions") if isinstance(data.get("emotions"), list) else []
+    emotions = [" ".join(e.split())[:24].lower() for e in emotions if isinstance(e, str) and e.strip()][:3]
+    return {"mood": mood.strip().lower(), "summary": " ".join(summary.split())[:MAX_MOOD_SUMMARY], "emotions": emotions}
+
+
+def mood_check(answers, tone_line, cfg=None):
+    """Judge today's mood from the astronaut's three spoken answers plus their voice-tone
+    estimate (or a note that there's none). answers: [{"question", "text"}]. One call, one
+    retry on a malformed answer. Raises AnalystError."""
+    if config.ai_api_key() is None:
+        raise AnalystError("AI is not configured")
+    cfg = cfg or config.ai_analyst()
+    rules = "\n".join(cfg.get("mood_check_instructions") or [])
+    qa = "\n".join(f"Q: {a['question']}\nA: {a['text']}" for a in answers)
+    messages = [
+        {"role": "system", "content": rules + (
+            "\n\nAnswer with ONLY one JSON object, no other text: "
+            '{"mood": "rough"|"low"|"okay"|"good"|"great", '
+            '"summary": "<1-2 short sentences to the astronaut, second person>", '
+            '"emotions": ["<up to 3 single words>"]}'
+        )},
+        {"role": "user", "content": f"Today's answers (spoken aloud, transcribed):\n{qa}\n\nVoice tone: {tone_line}"},
+    ]
+    raw = _call_once(messages, max_tokens=MOOD_CHECK_MAX_TOKENS, timeout=TIMEOUT_S)
+    try:
+        return parse_mood_check(raw)
+    except MalformedOutputError as first:
+        messages += [{"role": "assistant", "content": (raw or "")[:1500]},
+                     {"role": "user", "content": f"That answer was invalid ({first}). Reply again with ONLY the JSON object."}]
+        return parse_mood_check(_call_once(messages, max_tokens=MOOD_CHECK_MAX_TOKENS, timeout=TIMEOUT_S))
