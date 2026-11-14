@@ -55,10 +55,10 @@ All screenshots use the built-in Simulator and invented demo crew and data (no h
 </tr>
 <tr>
 <td width="50%" valign="top"><img src="docs/screenshots/mission.jpg" alt="Mission health" width="100%"><br><b>Mission health</b><br><sub>Five real NASA missions with 3D scenes (NASA 3D Resources), how each one stresses the body, and the sources behind it.</sub></td>
-<td width="50%" valign="top"><img src="docs/screenshots/exercise.jpg" alt="Exercises with a 3D coach" width="100%"><br><b>Exercises with a 3D coach</b><br><sub>ISS-style T2 treadmill, CEVIS cycle and ARED workouts, demonstrated step by step by an astronaut coach.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/exercise.jpg" alt="Exercises with a 3D coach" width="100%"><br><b>Exercises with a 3D coach</b><br><sub>ISS-style T2 treadmill, CEVIS cycle and ARED workouts, demonstrated step by step by an astronaut coach, plus a camera posture check.</sub></td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/screenshots/mind.jpg" alt="Mind & mood" width="100%"><br><b>Mind & mood</b><br><sub>A daily AI mood check by voice, the mood trend, and optional on-device face, posture and voice-tone observations.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/mind.jpg" alt="Mind & mood" width="100%"><br><b>Mind & mood</b><br><sub>A daily AI mood check by voice, the mood trend, and optional on-device face and voice-tone observations.</sub></td>
 <td width="50%" valign="top"><img src="docs/screenshots/surgeon-crew.jpg" alt="Flight surgeon console" width="100%"><br><b>Flight surgeon console</b><br><sub>The whole crew sorted by who needs attention first, live alerts, and messages that respect the comms delay.</sub></td>
 </tr>
 <tr>
@@ -82,9 +82,10 @@ ASTRA turns a laptop, a pocket-sized touchscreen and an NFC reader into a **heal
 - **3D digital twin:** a realistic, clickable anatomy model (skeleton, muscles, organs) coloured by the astronaut's current levels. Tap a body part to learn what it does, how spaceflight affects it, and what to do.
 - **Astra, the voice assistant:** say *"Astra"* on any page and talk hands-free, like a phone call. She answers from the astronaut's own data, can **open pages, log mood, sleep, symptoms, pain and vitals (always after a yes/no check), message the flight surgeon, run guided breathing and reaction tests, call for help ("emergency call now", "I need help": it starts the emergency at once, like the SOS button, even without saying "Astra") and cancel an emergency by voice**. She also speaks first: health warnings, schedule reminders, messages from Earth and a daily briefing. Ask her *"who are you?"* or *"what do you think about our project?"* and she introduces herself and how she helps (about 12 seconds), or *"what can you do?"*. Both are answered instantly, even offline.
 - **Live wearable monitor:** replays a **real NASA crew-state physiology recording** (heart rate from ECG, breathing rate, a relative stress level) as if from a wearable, with a moving ECG trace. One play-through becomes the day's vitals check.
-- **Mind & mood:** a short **daily AI mood check** by voice or text, plus optional **on-device** wellbeing observations: **Face Analysis** (MediaPipe face landmarks, e.g. eye closure), **Pose Analysis** (posture) and **"Wanna talk?"** (voice-tone estimates from a local Wav2Vec2 model). All of it runs on the laptop; no video or audio leaves the station.
+- **Mind & mood:** a short **daily AI mood check** by voice or text, plus optional **on-device** wellbeing observations: **Face Analysis** (MediaPipe face landmarks, e.g. eye closure) and **"Wanna talk?"** (voice-tone estimates from a local Wav2Vec2 model). All of it runs on the laptop; no video or audio leaves the station.
 - **Spacewalk (EVA) mode:** switch an astronaut to "outside" and the live EVA is compared with **368 real spacewalks** from NASA's EVA log (typical length, the record), with real suit incidents from the log shown next to matching suit readings.
-- **Trends, Sleep lab, Exercise (ISS-style T2 treadmill, CEVIS cycle, ARED resistance with a 3D coach), Schedule on a live mission clock, and Learn cards.**
+- **Exercises:** ISS-style T2 treadmill, CEVIS cycle and ARED resistance workouts demonstrated by a 3D astronaut coach, plus an optional on-device **Pose Analysis** posture check (12 seconds on camera: shoulder and hip level, side lean, head position, left/right balance, stillness).
+- **Trends, Sleep lab, Schedule on a live mission clock, and Learn cards.**
 - **Mission health:** pick one of five real missions (ISS Crew-13, the NASA Twins Study, Artemis II, Mars-520 and spacewalks/EVA) and see how each one stresses each body system, next to the astronaut's live levels, with a monitoring checklist and the NASA/ESA sources behind it.
 
 **For the Flight Surgeon / Crew Medical Officer**
@@ -188,7 +189,7 @@ We used AI tools both **to build** the project and **inside** the product:
 |---|---|
 | **Claude Code (Anthropic)** | Coding assistant during development: writing and refactoring backend, frontend and firmware code, tests, debugging, and documentation (including this README). Every change was reviewed and tested by the team. |
 | **Groq-hosted `openai/gpt-oss-120b`** (with smaller Groq models as fallbacks) | **Inside the app at runtime:** the AI health analyst, Astra's conversation and the daily mood check. Its answers are validated by the server; the threshold rules take over when it isn't available. |
-| **MediaPipe Face Landmarker and Pose Landmarker (Google, pre-trained)** | Optional on-device Face Analysis and Pose Analysis on the Mind page. |
+| **MediaPipe Face Landmarker and Pose Landmarker (Google, pre-trained)** | Optional on-device Face Analysis (Mind & mood page) and Pose Analysis posture check (Exercises page). |
 | **Wav2Vec2 voice-emotion model** ([`Dpngtm/wav2vec2-emotion-recognition`](https://huggingface.co/Dpngtm/wav2vec2-emotion-recognition), Hugging Face) | Optional on-device voice-tone estimates in "Wanna talk?". The team's dataset research and CPU training study are in `data/training/reports/`. |
 | **Microsoft Edge neural text-to-speech (`edge-tts`)** | Astra's optional neural voice, and the narration of our demo videos. |
 | **Browser speech recognition (Web Speech API)** | Turns the astronaut's voice into text (Chrome/Edge). |
@@ -355,7 +356,7 @@ Without a key everything still works, and the card reads *"AI offline · checked
 
 The AI's states and instructions are in `config/ai_analyst.json`. Astra's voice is chosen on `/admin` → *Station voice*.
 
-### Optional on-device Face, Pose and voice-tone analysis (Mind page)
+### Optional on-device Face, Pose and voice-tone analysis (Mind & mood and Exercises pages)
 
 The app runs without these. They are big downloads, so they're kept in separate files:
 

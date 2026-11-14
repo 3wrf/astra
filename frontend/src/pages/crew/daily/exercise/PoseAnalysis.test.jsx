@@ -1,4 +1,4 @@
-// The Mind page's Pose Analysis report: loading, empty, error, unavailable and success,
+// The Exercises page's Pose Analysis report: loading, empty, error, unavailable and success,
 // rendered to HTML; the setup messages; and the live detection status line.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";

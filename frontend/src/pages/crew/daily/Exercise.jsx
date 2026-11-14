@@ -2,6 +2,7 @@
 // CEVIS cycle, ARED resistance, stretching) against this astronaut's real workout logs
 // (GET /astronauts/<id>/exercise). A 3D coach demonstrates whichever exercise is picked,
 // step by step. "Start exercise" runs the same workout timer as the NFC tags and Astra.
+// Below the coach, the camera posture check (Pose Analysis, ./exercise/PoseAnalysis.jsx).
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import { AnimatedNumber, Button, Card, CardTitle, Progress, cx } from "../../../
 import { Icon } from "../../../components/ui/Icon.jsx";
 import { RingGauge } from "../../../components/charts/RingGauge.jsx";
 import { WebGLBoundary, NoWebGL } from "../../../three/webgl.jsx";
+import { PoseAnalysis } from "./exercise/PoseAnalysis.jsx";
 
 const CoachScene = lazy(() => import("../../../three/exercise/CoachScene.jsx"));
 const ICON = { t2: "exercise", cevis: "heart", ared: "exercise", stretch: "mind" };
@@ -93,7 +95,7 @@ function recommendation(data) {
 
 export default function Exercise() {
   const qc = useQueryClient();
-  const { id } = useAstronautPicker();
+  const { id, locked } = useAstronautPicker(); // locked = a crew member viewing themself
   const { isSurgeon } = useAuth();
   const ex = useExercise(id);
   const data = ex.data;
@@ -331,6 +333,9 @@ export default function Exercise() {
       </div>
 
       {error && <p className="m-0 rounded-xl bg-alert-bg px-4 py-2 text-sm text-alert-fg">{error}</p>}
+
+      {/* Posture check (Pose Analysis): watch the coach's form above, then check your own stance */}
+      <PoseAnalysis astroId={id} own={!!locked} />
 
         <div className="grid items-start gap-4 lg:grid-cols-3">
           <Card>
