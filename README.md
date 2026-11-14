@@ -11,31 +11,65 @@
 > **Demo with placeholder data. Not medical advice.** Every health threshold and medical text is a clearly
 > marked `PLACEHOLDER` in `config/*.json`, ready to be replaced with real flight-surgeon guidance.
 
+<br>
+
+<img src="docs/screenshots/overview.jpg" alt="ASTRA crew overview: today's status, daily check-ins, live monitor and the AI health analysis" width="100%">
+
 </div>
 
 ---
 
 ## Contents
 
-1. [What exactly does it do?](#1-what-exactly-does-it-do)
-2. [How does it work?](#2-how-does-it-work)
-3. [What benefits does it have?](#3-what-benefits-does-it-have)
-4. [What do we hope to achieve?](#4-what-do-we-hope-to-achieve)
-5. [Tools, languages, hardware and software](#5-tools-languages-hardware-and-software)
-6. [Use of AI (SI) tools](#6-use-of-ai-si-tools)
-7. [NASA data](#7-nasa-data)
-8. [Space agency partner data and other resources](#8-space-agency-partner-data-and-other-resources)
-9. [Run it on Windows](#9-run-it-on-windows)
-10. [Run it on Linux](#10-run-it-on-linux)
-11. [Optional: AI, hardware and admin setup](#11-optional-ai-hardware-and-admin-setup)
-12. [A 2-minute tour for judges](#12-a-2-minute-tour-for-judges)
-13. [Testing](#13-testing)
-14. [Project structure](#14-project-structure)
-15. [Troubleshooting](#15-troubleshooting)
+1. [Screenshots](#1-screenshots)
+2. [What exactly does it do?](#2-what-exactly-does-it-do)
+3. [How does it work?](#3-how-does-it-work)
+4. [What benefits does it have?](#4-what-benefits-does-it-have)
+5. [What do we hope to achieve?](#5-what-do-we-hope-to-achieve)
+6. [Tools, languages, hardware and software](#6-tools-languages-hardware-and-software)
+7. [Use of AI (SI) tools](#7-use-of-ai-si-tools)
+8. [NASA data](#8-nasa-data)
+9. [Space agency partner data and other resources](#9-space-agency-partner-data-and-other-resources)
+10. [Run it on Windows](#10-run-it-on-windows)
+11. [Run it on Linux](#11-run-it-on-linux)
+12. [Optional: AI, hardware and admin setup](#12-optional-ai-hardware-and-admin-setup)
+13. [A 2-minute tour for judges](#13-a-2-minute-tour-for-judges)
+14. [Testing](#14-testing)
+15. [Project structure](#15-project-structure)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
-## 1. What exactly does it do?
+## 1. Screenshots
+
+All screenshots use the built-in Simulator and invented demo crew and data (no hardware attached). The overview at the top shows a crew member's home screen with the AI health analysis.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/screenshots/body-skeleton.jpg" alt="3D body twin · skeleton" width="100%"><br><b>3D body twin · skeleton</b><br><sub>Real BodyParts3D anatomy. Tap a part (here the skeleton) to see its status, how space affects it and what to do.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/body-twin.jpg" alt="Astra & body" width="100%"><br><b>Astra & body</b><br><sub>The digital twin coloured by today's levels, next to every vital sign and its 7-day trend.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/screenshots/astra-voice.jpg" alt="Astra, the voice assistant" width="100%"><br><b>Astra, the voice assistant</b><br><sub>Say "Astra" on any page: a hands-free call that answers from your own data, logs things after a yes, and can call for help.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/trends.jpg" alt="Trends" width="100%"><br><b>Trends</b><br><sub>Every indicator over 7, 30 or 90 days, coloured by the placeholder GREEN / YELLOW / RED bands.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/screenshots/mission.jpg" alt="Mission health" width="100%"><br><b>Mission health</b><br><sub>Five real NASA missions with 3D scenes (NASA 3D Resources), how each one stresses the body, and the sources behind it.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/exercise.jpg" alt="Exercises with a 3D coach" width="100%"><br><b>Exercises with a 3D coach</b><br><sub>ISS-style T2 treadmill, CEVIS cycle and ARED workouts, demonstrated step by step by an astronaut coach.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/screenshots/mind.jpg" alt="Mind & mood" width="100%"><br><b>Mind & mood</b><br><sub>A daily AI mood check by voice, the mood trend, and optional on-device face, posture and voice-tone observations.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/surgeon-crew.jpg" alt="Flight surgeon console" width="100%"><br><b>Flight surgeon console</b><br><sub>The whole crew sorted by who needs attention first, live alerts, and messages that respect the comms delay.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/screenshots/login.jpg" alt="Sign in" width="100%"><br><b>Sign in</b><br><sub>Tap an NFC crew card, or use a password or Face ID. Each astronaut only ever sees their own data.</sub></td>
+<td width="50%" valign="top"><img src="docs/screenshots/emergency.jpg" alt="Emergency mode" width="100%"><br><b>Emergency mode</b><br><sub>Raised from the device's SOS button, an emergency card, the web app or Astra; cancel with a button or by voice.</sub></td>
+</tr>
+</table>
+
+---
+
+## 2. What exactly does it do?
 
 ASTRA turns a laptop, a pocket-sized touchscreen and an NFC reader into a **health station for a spacecraft, a space station, a rover or a Moon/Mars base**. Astronauts are not doctors, so every screen answers four questions in plain language: **How am I? Why does it matter in space? What should I do now? When should the flight surgeon be told?**
 
@@ -65,7 +99,7 @@ ASTRA turns a laptop, a pocket-sized touchscreen and an NFC reader into a **heal
 
 ---
 
-## 2. How does it work?
+## 3. How does it work?
 
 ```mermaid
 flowchart LR
@@ -104,7 +138,7 @@ flowchart LR
 
 ---
 
-## 3. What benefits does it have?
+## 4. What benefits does it have?
 
 | Benefit | Why it matters in space |
 |---|---|
@@ -119,7 +153,7 @@ flowchart LR
 
 ---
 
-## 4. What do we hope to achieve?
+## 5. What do we hope to achieve?
 
 - **Show that crew self-assessment can be simple, visual and trustworthy**: a tool an astronaut actually wants to use every day, not another form.
 - **Prepare for Earth-independent medical operations** on long missions (Artemis, Mars), where the crew must handle first-line care themselves.
@@ -129,7 +163,7 @@ flowchart LR
 
 ---
 
-## 5. Tools, languages, hardware and software
+## 6. Tools, languages, hardware and software
 
 | Area | What we used |
 |---|---|
@@ -146,7 +180,7 @@ flowchart LR
 
 ---
 
-## 6. Use of AI (SI) tools
+## 7. Use of AI (SI) tools
 
 We used AI tools both **to build** the project and **inside** the product:
 
@@ -164,7 +198,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 ---
 
-## 7. NASA data
+## 8. NASA data
 
 | Resource | How we used it |
 |---|---|
@@ -183,7 +217,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 ---
 
-## 8. Space agency partner data and other resources
+## 9. Space agency partner data and other resources
 
 **Space agency partners**
 
@@ -219,7 +253,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 ---
 
-## 9. Run it on Windows
+## 10. Run it on Windows
 
 **You need:** Windows 10/11, **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/); tick *"Add python.exe to PATH"* during setup), and **Chrome or Edge**. Git is optional. **Node.js is NOT needed**: the built web app (`frontend/dist`) is already in the repo.
 
@@ -247,7 +281,7 @@ py -3 -m venv .venv
 .venv\Scripts\python.exe app.py --simulate
 ```
 
-Open **<http://localhost:5000>** in Chrome or Edge. Use `localhost`, not an IP address: browsers only allow the microphone on `localhost` or https. Then follow the [2-minute tour](#12-a-2-minute-tour-for-judges).
+Open **<http://localhost:5000>** in Chrome or Edge. Use `localhost`, not an IP address: browsers only allow the microphone on `localhost` or https. Then follow the [2-minute tour](#13-a-2-minute-tour-for-judges).
 
 > **Brave and Firefox:** the whole app works, but **talking to Astra by voice needs Chrome or Edge**. Brave switches off the browser's speech-recognition service and Firefox doesn't have one, so in those browsers you type to Astra instead (she still answers out loud).
 
@@ -257,7 +291,7 @@ Open **<http://localhost:5000>** in Chrome or Edge. Use `localhost`, not an IP a
 
 ---
 
-## 10. Run it on Linux
+## 11. Run it on Linux
 
 **You need:** Python 3.10+ with `venv`, and Chrome or Chromium (or Edge). Example for Debian/Ubuntu:
 
@@ -305,7 +339,7 @@ Open **<http://localhost:5000>**. Stop with **Ctrl + C**.
 
 ---
 
-## 11. Optional: AI, hardware and admin setup
+## 12. Optional: AI, hardware and admin setup
 
 ### AI analysis and Astra (free, about 2 minutes)
 
@@ -360,7 +394,7 @@ Libraries, pins, wiring and upload steps are in [`firmware/README.md`](firmware/
 
 ---
 
-## 12. A 2-minute tour for judges
+## 13. A 2-minute tour for judges
 
 Everything below works in `--simulate` mode with no hardware.
 
@@ -376,7 +410,7 @@ The full feature guide is in [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
 
 ---
 
-## 13. Testing
+## 14. Testing
 
 ```bash
 .venv/bin/python -m pytest        # Windows: .venv\Scripts\python.exe -m pytest
@@ -396,7 +430,7 @@ npm run build     # rebuild frontend/dist after changing the UI
 
 ---
 
-## 14. Project structure
+## 15. Project structure
 
 ```text
 astra/
@@ -415,13 +449,13 @@ astra/
 │   ├── astro_cyd/          CYD touchscreen sketch
 │   └── pico_nfc_reader/    Pico + PN532 NFC reader sketch
 ├── tests/                  pytest suite
-├── docs/                   videos, PDFs, user guide, original build spec, developer notes
+├── docs/                   screenshots/, videos, PDFs, user guide, original build spec, developer notes
 └── data/                   created on first run (database, secret key): not in git
 ```
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 | Problem | Fix |
 |---|---|
