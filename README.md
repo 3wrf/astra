@@ -17,39 +17,25 @@
 
 ## Contents
 
-1. [Project demo](#1-project-demo)
-2. [What exactly does it do?](#2-what-exactly-does-it-do)
-3. [How does it work?](#3-how-does-it-work)
-4. [What benefits does it have?](#4-what-benefits-does-it-have)
-5. [What do we hope to achieve?](#5-what-do-we-hope-to-achieve)
-6. [Tools, languages, hardware and software](#6-tools-languages-hardware-and-software)
-7. [Use of AI (SI) tools](#7-use-of-ai-si-tools)
-8. [NASA data](#8-nasa-data)
-9. [Space agency partner data and other resources](#9-space-agency-partner-data-and-other-resources)
-10. [Run it on Windows](#10-run-it-on-windows)
-11. [Run it on Linux](#11-run-it-on-linux)
-12. [Optional: AI, hardware and admin setup](#12-optional-ai-hardware-and-admin-setup)
-13. [A 2-minute tour for judges](#13-a-2-minute-tour-for-judges)
-14. [Testing](#14-testing)
-15. [Project structure](#15-project-structure)
-16. [Troubleshooting](#16-troubleshooting)
+1. [What exactly does it do?](#1-what-exactly-does-it-do)
+2. [How does it work?](#2-how-does-it-work)
+3. [What benefits does it have?](#3-what-benefits-does-it-have)
+4. [What do we hope to achieve?](#4-what-do-we-hope-to-achieve)
+5. [Tools, languages, hardware and software](#5-tools-languages-hardware-and-software)
+6. [Use of AI (SI) tools](#6-use-of-ai-si-tools)
+7. [NASA data](#7-nasa-data)
+8. [Space agency partner data and other resources](#8-space-agency-partner-data-and-other-resources)
+9. [Run it on Windows](#9-run-it-on-windows)
+10. [Run it on Linux](#10-run-it-on-linux)
+11. [Optional: AI, hardware and admin setup](#11-optional-ai-hardware-and-admin-setup)
+12. [A 2-minute tour for judges](#12-a-2-minute-tour-for-judges)
+13. [Testing](#13-testing)
+14. [Project structure](#14-project-structure)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
-## 1. Project demo
-
-| | |
-|---|---|
-| 🎬 **Trailer** (short, narrated) | [`docs/Astro-Health-Station-Trailer.mp4`](docs/Astro-Health-Station-Trailer.mp4) |
-| 🧭 **Feature tour** (~6 min) | [`docs/Astro-Health-Station-Demo.mp4`](docs/Astro-Health-Station-Demo.mp4) |
-| 🛠️ **Technical deep dive** (~12 min) | [`docs/Astro-Health-Station-Tech-Deep-Dive.mp4`](docs/Astro-Health-Station-Tech-Deep-Dive.mp4) |
-| 📄 **Guide and architecture (PDF)** | [`docs/Astro-Health-Station-Guide.pdf`](docs/Astro-Health-Station-Guide.pdf) · [`docs/Astro-Health-Station-Architecture.pdf`](docs/Astro-Health-Station-Architecture.pdf) |
-
-All demo data is invented. The app runs **without any hardware**: a built-in **Simulator** replays every card tap and touchscreen event through the same code path as the real devices.
-
----
-
-## 2. What exactly does it do?
+## 1. What exactly does it do?
 
 ASTRA turns a laptop, a pocket-sized touchscreen and an NFC reader into a **health station for a spacecraft, a space station, a rover or a Moon/Mars base**. Astronauts are not doctors, so every screen answers four questions in plain language: **How am I? Why does it matter in space? What should I do now? When should the flight surgeon be told?**
 
@@ -79,7 +65,7 @@ ASTRA turns a laptop, a pocket-sized touchscreen and an NFC reader into a **heal
 
 ---
 
-## 3. How does it work?
+## 2. How does it work?
 
 ```mermaid
 flowchart LR
@@ -118,7 +104,7 @@ flowchart LR
 
 ---
 
-## 4. What benefits does it have?
+## 3. What benefits does it have?
 
 | Benefit | Why it matters in space |
 |---|---|
@@ -133,7 +119,7 @@ flowchart LR
 
 ---
 
-## 5. What do we hope to achieve?
+## 4. What do we hope to achieve?
 
 - **Show that crew self-assessment can be simple, visual and trustworthy**: a tool an astronaut actually wants to use every day, not another form.
 - **Prepare for Earth-independent medical operations** on long missions (Artemis, Mars), where the crew must handle first-line care themselves.
@@ -143,7 +129,7 @@ flowchart LR
 
 ---
 
-## 6. Tools, languages, hardware and software
+## 5. Tools, languages, hardware and software
 
 | Area | What we used |
 |---|---|
@@ -160,7 +146,7 @@ flowchart LR
 
 ---
 
-## 7. Use of AI (SI) tools
+## 6. Use of AI (SI) tools
 
 We used AI tools both **to build** the project and **inside** the product:
 
@@ -178,7 +164,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 ---
 
-## 8. NASA data
+## 7. NASA data
 
 | Resource | How we used it |
 |---|---|
@@ -197,7 +183,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 ---
 
-## 9. Space agency partner data and other resources
+## 8. Space agency partner data and other resources
 
 **Space agency partners**
 
@@ -233,7 +219,7 @@ We used AI tools both **to build** the project and **inside** the product:
 
 ---
 
-## 10. Run it on Windows
+## 9. Run it on Windows
 
 **You need:** Windows 10/11, **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/); tick *"Add python.exe to PATH"* during setup), and **Chrome or Edge**. Git is optional. **Node.js is NOT needed**: the built web app (`frontend/dist`) is already in the repo.
 
@@ -261,7 +247,7 @@ py -3 -m venv .venv
 .venv\Scripts\python.exe app.py --simulate
 ```
 
-Open **<http://localhost:5000>** in Chrome or Edge. Use `localhost`, not an IP address: browsers only allow the microphone on `localhost` or https. Then follow the [2-minute tour](#13-a-2-minute-tour-for-judges).
+Open **<http://localhost:5000>** in Chrome or Edge. Use `localhost`, not an IP address: browsers only allow the microphone on `localhost` or https. Then follow the [2-minute tour](#12-a-2-minute-tour-for-judges).
 
 > **Brave and Firefox:** the whole app works, but **talking to Astra by voice needs Chrome or Edge**. Brave switches off the browser's speech-recognition service and Firefox doesn't have one, so in those browsers you type to Astra instead (she still answers out loud).
 
@@ -271,7 +257,7 @@ Open **<http://localhost:5000>** in Chrome or Edge. Use `localhost`, not an IP a
 
 ---
 
-## 11. Run it on Linux
+## 10. Run it on Linux
 
 **You need:** Python 3.10+ with `venv`, and Chrome or Chromium (or Edge). Example for Debian/Ubuntu:
 
@@ -319,7 +305,7 @@ Open **<http://localhost:5000>**. Stop with **Ctrl + C**.
 
 ---
 
-## 12. Optional: AI, hardware and admin setup
+## 11. Optional: AI, hardware and admin setup
 
 ### AI analysis and Astra (free, about 2 minutes)
 
@@ -374,7 +360,7 @@ Libraries, pins, wiring and upload steps are in [`firmware/README.md`](firmware/
 
 ---
 
-## 13. A 2-minute tour for judges
+## 12. A 2-minute tour for judges
 
 Everything below works in `--simulate` mode with no hardware.
 
@@ -390,7 +376,7 @@ The full feature guide is in [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
 
 ---
 
-## 14. Testing
+## 13. Testing
 
 ```bash
 .venv/bin/python -m pytest        # Windows: .venv\Scripts\python.exe -m pytest
@@ -410,7 +396,7 @@ npm run build     # rebuild frontend/dist after changing the UI
 
 ---
 
-## 15. Project structure
+## 14. Project structure
 
 ```text
 astra/
@@ -435,7 +421,7 @@ astra/
 
 ---
 
-## 16. Troubleshooting
+## 15. Troubleshooting
 
 | Problem | Fix |
 |---|---|
