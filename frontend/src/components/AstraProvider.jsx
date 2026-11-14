@@ -24,6 +24,7 @@ import { MOOD_CHECK_INTRO, MOOD_CHECK_OUTRO, submitMoodCheck } from "../lib/mood
 import { audioCtx, micMeter } from "../lib/stationAudio.js";
 import { micLevels, wakeIsYou } from "../lib/hearing.js";
 import { useVoice, voiceState } from "../lib/useVoice.js";
+import { isEcho } from "../lib/bargeIn.js";
 import { useSocketEvent } from "../lib/socket.js";
 import { missionDaySeconds, withLiveStatus } from "../lib/schedule.js";
 import {
@@ -44,6 +45,9 @@ function readPref() {
 }
 
 const getRecognition = () => (typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null);
+// Brave has the speech-recognition API but switches its service off, so it never hears
+// anything (every session fails with "network"). Say so instead of seeming to ignore you.
+const isBrave = () => typeof navigator !== "undefined" && !!navigator.brave && typeof navigator.brave.isBrave === "function";
 
 export function AstraProvider({ children }) {
   const { user, isSurgeon } = useAuth();
@@ -144,7 +148,11 @@ export function AstraProvider({ children }) {
   // ---- the wake word listener ----
   const secure = typeof window === "undefined" || window.isSecureContext;
   const Recognition = getRecognition();
-  const listen = available && enabled && secure && !!Recognition && owner;
+  const brave = isBrave();
+  const listen = available && enabled && secure && !!Recognition && !brave && owner;
+  const callRef = useRef(null);
+  useEffect(() => { callRef.current = call; }, [call]);
+  const speakerTextRef = useRef(() => ""); // what she's announcing right now (set below)
   useEffect(() => {
     if (!listen) return undefined;
     // The microphone level, so the name has to come from someone close (lib/hearing.js).
@@ -154,13 +162,18 @@ export function AstraProvider({ children }) {
       onState: setListenerState,
       accept: (hit) => wakeIsYou(hit.confidence, micLevels),
       onWake: (hit) => {
-        if (voiceState.speaking) return; // her own voice
+        // While she's announcing something, only HER OWN words are ignored; you saying
+        // "Astra" over her still opens the call (it used to be ignored, so she seemed deaf).
+        if (voiceState.speaking && (!hit.heard || isEcho(hit.heard, speakerTextRef.current()))) return;
         l.pause(); // right away: the voice screen starts its own recognition
         open(hit.question);
       },
     });
     listenerRef.current = l;
     l.start();
+    // Two recognitions can't share the microphone: if the voice screen is already open
+    // (this listener was just re-made), wait until it closes.
+    if (callRef.current) l.pause();
     return () => { l.stop(); listenerRef.current = null; micMeter.stop(); };
   }, [listen, Recognition, open]);
 
@@ -200,10 +213,17 @@ export function AstraProvider({ children }) {
   // in a hidden tab without saying so.
   useEffect(() => {
     if (!listen) return undefined;
-    const kick = () => { if (document.visibilityState === "visible" && !call) listenerRef.current?.restart(); };
+    const kick = () => { if (document.visibilityState === "visible" && !call) listenerRef.current?.restart("tab shown again"); };
+    // A click while the mic shows "blocked" retries at once (no refresh needed).
+    const click = () => { if (!call && listenerRef.current?.isBlocked()) listenerRef.current.restart("clicked while blocked"); };
     document.addEventListener("visibilitychange", kick);
     window.addEventListener("focus", kick);
-    return () => { document.removeEventListener("visibilitychange", kick); window.removeEventListener("focus", kick); };
+    window.addEventListener("pointerdown", click);
+    return () => {
+      document.removeEventListener("visibilitychange", kick);
+      window.removeEventListener("focus", kick);
+      window.removeEventListener("pointerdown", click);
+    };
   }, [listen, call]);
 
   // One recognition at a time: the voice screen listens itself, so pause meanwhile.
@@ -237,12 +257,14 @@ export function AstraProvider({ children }) {
   const state = !available ? "off"
     : !enabled ? "off"
     : !Recognition ? "unsupported"
+    : brave ? "brave"
     : !secure ? "insecure"
     : !owner ? "elsewhere"
     : listenerState === "off" ? "starting" : listenerState;
 
   // ---- Astra speaking first ----
   const speaker = useVoice({ astroId, alwaysSpeak: true });
+  useEffect(() => { speakerTextRef.current = speaker.currentText; }, [speaker.currentText]);
   const noticeSettings = speaker.settings.notices || "speak";
   const [notices, setNotices] = useState([]);
   const lastSpokenAt = useRef(0);

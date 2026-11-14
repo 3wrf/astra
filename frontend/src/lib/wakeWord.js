@@ -54,13 +54,17 @@ export function findWakeCommand(text) {
  * agrees it was the astronaut (loud and clear enough, lib/hearing.js). onState(state) with
  * "listening" | "paused" | "blocked" | "off". Restarts on every `end` (browsers end
  * continuous recognition on their own every so often), backing off 0.3 s -> 5 s after
- * errors; a denied microphone ("not-allowed") stops it for good (state "blocked").
+ * errors. A refused microphone ("not-allowed") shows "blocked" and retries every
+ * BLOCKED_RETRY_MS -- NOT stops for good: Chrome also says "not-allowed" for a moment in
+ * normal use (the tab was hidden, another app had the mic), and stopping for good there left
+ * Astra deaf until a page refresh. restart() (a click, the tab shown again) retries at once.
  * Watchdog: browsers sometimes stop hearing WITHOUT firing "end" (a network hiccup, the
  * mic switching, the tab sleeping) -- if a session goes WATCHDOG_MS with no event at all,
  * it's thrown away and a fresh one started. restart() does the same on demand (the app
  * calls it when the tab becomes visible again).
  */
 export const WATCHDOG_MS = 45000;
+export const BLOCKED_RETRY_MS = 10000;
 
 export function createWakeListener({
   Recognition, onWake, onState, accept = () => true, schedule = setTimeout, unschedule = clearTimeout,
@@ -70,6 +74,7 @@ export function createWakeListener({
   let rec = null;
   let running = false;
   let paused = false;
+  let blocked = false; // the browser refused the microphone last time; keep retrying slowly
   let failures = 0;
   let timer = null;
   let lastEvent = now();
@@ -100,7 +105,8 @@ export function createWakeListener({
     r.interimResults = true;
     r.maxAlternatives = 3; // the name is sometimes only in the 2nd/3rd guess
     r.onstart = alive;
-    r.onaudiostart = alive;
+    // The microphone really is ours again (after "blocked"): say so.
+    r.onaudiostart = () => { alive(); if (blocked) { blocked = false; failures = 0; set("listening"); } };
     r.onsoundstart = alive;
     r.onspeechstart = alive;
     // Each phrase (result index) can wake her once. A FINAL phrase wakes her at once. A
@@ -118,7 +124,7 @@ export function createWakeListener({
       // Last check (lib/hearing.js): loud and clear enough to be the astronaut, not the room?
       if (!accept(hit)) { console.debug(`[astra] ignored "${hit.heard}" (too quiet or unclear: probably the room)`); return; }
       console.info(`[astra] wake word (${how}): "${hit.question}"`);
-      onWake?.({ question: hit.question });
+      onWake?.({ question: hit.question, heard: hit.heard });
     };
     const hitIn = (res) => {
       for (let a = 0; a < (res.length || 1); a++) {
@@ -148,7 +154,7 @@ export function createWakeListener({
     r.onerror = (e) => {
       alive();
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        running = false;
+        blocked = true;
         set("blocked");
       } else if (e.error !== "no-speech" && e.error !== "aborted") {
         failures += 1;
@@ -158,15 +164,15 @@ export function createWakeListener({
       if (armed) fire(armed.i, armed.hit, "session ended");
       rec = null;
       if (!running || paused) return;
-      // Back on quickly: anything said in the gap is lost.
-      const delay = failures ? Math.min(5000, 300 * 2 ** (failures - 1)) : 100;
+      // Back on quickly: anything said in the gap is lost. Refused mic: try again now and then.
+      const delay = blocked ? BLOCKED_RETRY_MS : failures ? Math.min(5000, 300 * 2 ** (failures - 1)) : 100;
       timer = schedule(boot, delay);
     };
     rec = r;
     alive();
     try {
       r.start();
-      set("listening");
+      set(blocked ? "blocked" : "listening"); // "listening" again once the mic actually opens
     } catch {
       rec = null;
       failures += 1;
@@ -178,6 +184,7 @@ export function createWakeListener({
     if (!running || paused) return;
     if (why) console.warn(`[astra] restarting the wake-word listener (${why})`);
     teardown();
+    failures = 0; // a fresh try right now, even after errors or a refused mic
     boot();
   }
 
@@ -187,7 +194,7 @@ export function createWakeListener({
 
   return {
     start() {
-      running = true; paused = false; failures = 0;
+      running = true; paused = false; failures = 0; blocked = false;
       unevery(watchdog);
       watchdog = every(check, Math.min(10000, watchdogMs));
       boot();
@@ -195,6 +202,7 @@ export function createWakeListener({
     stop() { running = false; unevery(watchdog); watchdog = null; teardown(); set("off"); },
     pause() { if (!running) return; paused = true; teardown(); set("paused"); },
     resume() { if (!running || !paused) return; paused = false; boot(); },
-    restart: () => restart("asked to"),
+    restart: (why = "asked to") => restart(why),
+    isBlocked: () => blocked,
   };
 }

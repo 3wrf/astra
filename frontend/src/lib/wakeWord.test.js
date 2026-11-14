@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createWakeListener, findWakeCommand, isName } from "./wakeWord.js";
+import { BLOCKED_RETRY_MS, createWakeListener, findWakeCommand, isName } from "./wakeWord.js";
 
 describe("findWakeCommand", () => {
   it("hears the name on its own", () => {
@@ -37,7 +37,7 @@ function harness() {
   const states = [], wakes = [];
   const l = createWakeListener({
     Recognition: FakeRec, schedule, unschedule: () => {},
-    onWake: (w) => wakes.push(w), onState: (s) => states.push(s),
+    onWake: (w) => wakes.push({ question: w.question }), onState: (s) => states.push(s),
   });
   const say = (rec, transcript, isFinal = true, alts = []) => {
     const r = [{ transcript }, ...alts.map((t) => ({ transcript: t }))]; r.isFinal = isFinal;
@@ -82,13 +82,30 @@ describe("createWakeListener", () => {
     h.made[1].onend();
     expect(h.timers[0].ms).toBe(600);
   });
-  it("stops for good when the microphone is denied", () => {
+  it("a refused microphone shows 'blocked' but keeps retrying, and recovers by itself", () => {
     const h = harness();
     h.l.start();
     h.made[0].onerror({ error: "not-allowed" });
     h.made[0].onend();
     expect(h.states.at(-1)).toBe("blocked");
-    expect(h.timers).toEqual([]);
+    expect(h.timers).toHaveLength(1);
+    expect(h.timers[0].ms).toBe(BLOCKED_RETRY_MS); // never stops for good (that needed a refresh)
+    h.runTimer();
+    expect(h.made.length).toBe(2);
+    expect(h.states.at(-1)).toBe("blocked"); // not "listening" until the mic really opens
+    h.made[1].onaudiostart();
+    expect(h.states.at(-1)).toBe("listening");
+    h.say(h.made[1], "astra how am I doing");
+    expect(h.wakes).toEqual([{ question: "how am I doing" }]);
+  });
+  it("restart() (a click, the tab shown again) retries a blocked mic at once", () => {
+    const h = harness();
+    h.l.start();
+    h.made[0].onerror({ error: "not-allowed" });
+    expect(h.l.isBlocked()).toBe(true);
+    h.l.restart("clicked");
+    expect(h.made.length).toBe(2);
+    expect(h.made[1].started).toBe(true);
   });
   it("pauses (e.g. while the voice screen is open) and resumes", () => {
     const h = harness();
@@ -108,7 +125,7 @@ describe("ignoring the room", () => {
     class FakeRec { constructor() { made.push(this); } start() {} abort() {} }
     const wakes = [], asked = [];
     const l = createWakeListener({
-      Recognition: FakeRec, onWake: (w) => wakes.push(w), schedule: () => 1, unschedule: () => {},
+      Recognition: FakeRec, onWake: (w) => wakes.push({ question: w.question }), schedule: () => 1, unschedule: () => {},
       accept: (hit) => { asked.push(hit); return hit.confidence > 0.5; },
     });
     l.start();
@@ -185,5 +202,21 @@ describe("watchdog", () => {
     clock = 120000; tick(); // 50 s with nothing at all
     expect(made[0].aborted).toBe(true);
     expect(made.length).toBe(2);
+  });
+});
+
+describe("the wake callback", () => {
+  it("also says what was heard (so the app can tell her own voice from yours)", () => {
+    class FakeRec { start() {} abort() {} }
+    const got = [];
+    let rec = null;
+    const l = createWakeListener({
+      Recognition: class extends FakeRec { constructor() { super(); rec = this; } },
+      onWake: (w) => got.push(w), schedule: () => 1, unschedule: () => {}, every: () => 1, unevery: () => {},
+    });
+    l.start();
+    const r = [{ transcript: "astra how am I doing" }]; r.isFinal = true;
+    rec.onresult({ resultIndex: 0, results: [r] });
+    expect(got).toEqual([{ question: "how am I doing", heard: "astra how am I doing" }]);
   });
 });

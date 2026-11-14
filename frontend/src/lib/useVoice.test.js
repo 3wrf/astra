@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MIC_DENIED, pickVoice, voiceErrorMessage } from "./useVoice.js";
+import { MIC_DENIED, pickVoice, speechChunks, voiceErrorMessage } from "./useVoice.js";
 import { echoParams, QUINDAR_HZ, quindarFrequency } from "./stationAudio.js";
 
 const v = (name, lang) => ({ name, lang });
@@ -30,7 +30,7 @@ describe("voiceErrorMessage", () => {
     expect(voiceErrorMessage("not-allowed")).toBe(MIC_DENIED);
   });
   it("names any other error", () => {
-    expect(voiceErrorMessage("network")).toBe("Voice error: network");
+    expect(voiceErrorMessage("audio-capture")).toBe("Voice error: audio-capture");
   });
 });
 
@@ -65,5 +65,32 @@ describe("echo levels", () => {
     const [l, m, s] = ["light", "medium", "strong"].map(echoParams);
     for (const k of ["tail", "wet", "feedback", "echo"]) expect(l[k] < m[k] && m[k] < s[k]).toBe(true);
     expect(echoParams("nonsense")).toEqual(m);
+  });
+});
+
+describe("speechChunks (Chrome cuts off one long utterance)", () => {
+  it("splits a long answer into short sentence pieces that keep every word", () => {
+    const text = "I love it! ASTRA lets astronauts check their own health far from Earth. They tap a crew card and talk to me, and I read their vitals, sleep and mood together. The benefits: problems caught early, simple steps anyone can follow, and the flight surgeon alerted even with a twenty-minute delay.";
+    const pieces = speechChunks(text);
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces.every((p) => p.length <= 180)).toBe(true);
+    expect(pieces.join(" ").replace(/\s+/g, " ")).toBe(text);
+  });
+  it("breaks a single very long sentence at commas or spaces", () => {
+    const long = Array.from({ length: 60 }, (_, i) => `word${i}`).join(", ");
+    const pieces = speechChunks(long, 100);
+    expect(pieces.every((p) => p.length <= 101)).toBe(true);
+    expect(pieces.join(" ").replace(/\s+/g, " ")).toBe(long);
+  });
+  it("keeps a short answer as one piece", () => {
+    expect(speechChunks("Opening Trends.")).toEqual(["Opening Trends."]);
+    expect(speechChunks("")).toEqual([]);
+  });
+});
+
+describe("voice error messages", () => {
+  it("explains a recognition network error instead of a raw code", () => {
+    expect(voiceErrorMessage("network")).toMatch(/internet|Brave/);
+    expect(voiceErrorMessage("not-allowed")).toBe(MIC_DENIED);
   });
 });

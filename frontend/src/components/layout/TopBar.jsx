@@ -21,7 +21,8 @@ const PILL = {
   starting: { dot: "bg-subtle", text: "Astra starting…", tone: "text-ink-2" },
   off: { dot: "bg-subtle", text: "Astra off", tone: "text-ink-2" },
   elsewhere: { dot: "bg-subtle", text: "Astra in another tab", tone: "text-ink-2", hint: "Astra listens in the tab you used last (two tabs can't share the microphone). Click anywhere in this tab to bring her here." },
-  blocked: { dot: "bg-check-fg", text: "Mic blocked", tone: "text-check-fg", hint: "The browser blocked the microphone. Allow it in the site settings (the icon left of the address), then click here twice." },
+  blocked: { dot: "bg-check-fg", text: "Mic blocked", tone: "text-check-fg", hint: "The browser blocked the microphone. Astra keeps trying by herself; clicking anywhere tries again at once. If it stays blocked, allow the microphone in the site settings (the icon left of the address)." },
+  brave: { dot: "bg-check-fg", text: "Voice needs Chrome or Edge", tone: "text-check-fg", hint: "Brave switches off the browser speech recognition Astra uses to hear you, so she can't hear her name here. Open the app in Chrome or Edge to talk to her; typing to her works in Brave." },
   insecure: { dot: "bg-check-fg", text: "Astra needs localhost", tone: "text-check-fg", hint: "Browsers only allow the microphone on localhost or https. Open the app as http://localhost:5000 on the computer running it." },
   unsupported: { dot: "bg-check-fg", text: "No voice here", tone: "text-check-fg", hint: "This browser can't recognise speech. Use Chrome or Edge." },
 };

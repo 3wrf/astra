@@ -60,8 +60,35 @@ export function pickVoice(voices = [], gender = "female") {
   );
 }
 
+export const BRAVE_NO_VOICE = "Brave switches off voice recognition, so Astra can't hear you here. Use Chrome or Edge to talk to her (typing works).";
+const inBrave = () => typeof navigator !== "undefined" && !!navigator.brave;
+
 export function voiceErrorMessage(error) {
-  return error === "not-allowed" ? MIC_DENIED : `Voice error: ${error}`;
+  if (error === "not-allowed") return MIC_DENIED;
+  if (error === "network") return inBrave() ? BRAVE_NO_VOICE : "Voice recognition needs the internet (the browser turns speech into text online). Typing still works.";
+  return `Voice error: ${error}`;
+}
+
+/** Text split into sentence-sized pieces for the browser voice: Chrome stops (and often never
+ *  says it finished) partway through one long utterance, ~15 s in -- so a 20-second answer was cut
+ *  off. Each piece is short enough to always finish. */
+export function speechChunks(text, max = 180) {
+  const sentences = String(text || "").match(/[^.!?]+[.!?]*\s*/g) || [];
+  const out = [];
+  for (const s of sentences) {
+    let piece = s;
+    while (piece.length > max) { // a very long sentence: break at a comma or space
+      let cut = piece.lastIndexOf(", ", max);
+      if (cut < max / 2) cut = piece.lastIndexOf(" ", max);
+      if (cut <= 0) cut = max;
+      out.push(piece.slice(0, cut + 1));
+      piece = piece.slice(cut + 1);
+    }
+    const last = out.length - 1;
+    if (last >= 0 && out[last].length + piece.length <= max) out[last] += piece; // keep short ones together
+    else out.push(piece);
+  }
+  return out.map((p) => p.trim()).filter(Boolean);
 }
 
 function getSynth() {
@@ -158,32 +185,45 @@ export function useVoice({ astroId, onInterim, onFinal, onNoSpeech, alwaysSpeak 
     setSpeaking(false);
   }, []);
 
-  const speakBrowser = useCallback((text, token) => new Promise((resolve) => {
+  // One sentence-sized piece at a time (speechChunks): a single long utterance gets cut off
+  // in Chrome. Stops between pieces if the reply was cancelled or interrupted.
+  const speakBrowser = useCallback(async (text, token) => {
     const s = getSynth();
-    if (!s) { resolve(); return; }
-    const u = new window.SpeechSynthesisUtterance(text);
+    if (!s) return;
     const { rate = 1, pitch = "normal" } = live.current.settings || {};
-    u.rate = 1.02 * rate;
-    u.pitch = BROWSER_PITCH[pitch] ?? 1;
-    if (voiceRef.current) {
-      u.voice = voiceRef.current;
-      u.lang = voiceRef.current.lang;
-    }
-    let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    u.onstart = () => { if (token === tokenRef.current) setTalking(true); };
-    u.onend = finish;
-    u.onerror = finish;
-    u.onboundary = (e) => {
-      voiceState.mouth = 1;
-      if (progress.current && typeof e.charIndex === "number") progress.current.chars = e.charIndex + (e.charLength || 0);
-    };
-    setTimeout(finish, 6000 + text.length * 110); // Chrome sometimes never fires onend
     // Chrome's speech queue can get stuck "paused" (e.g. after the tab was hidden): clear it.
     s.cancel();
     if (s.paused) s.resume();
-    s.speak(u);
-  }), [setTalking]);
+    let offset = 0;
+    for (const piece of speechChunks(text)) {
+      if (token !== tokenRef.current) return;
+      const at = text.indexOf(piece, offset);
+      const base = at >= 0 ? at : offset;
+      offset = base + piece.length;
+      await new Promise((resolve) => {
+        const u = new window.SpeechSynthesisUtterance(piece);
+        u.rate = 1.02 * rate;
+        u.pitch = BROWSER_PITCH[pitch] ?? 1;
+        if (voiceRef.current) {
+          u.voice = voiceRef.current;
+          u.lang = voiceRef.current.lang;
+        }
+        let done = false;
+        let cap = null;
+        const finish = () => { if (!done) { done = true; clearTimeout(cap); resolve(); } };
+        u.onstart = () => { if (token === tokenRef.current) setTalking(true); };
+        u.onend = finish;
+        u.onerror = finish;
+        u.onboundary = (e) => {
+          voiceState.mouth = 1;
+          if (progress.current && typeof e.charIndex === "number") progress.current.chars = base + e.charIndex + (e.charLength || 0);
+        };
+        cap = setTimeout(finish, 4000 + piece.length * 110); // Chrome sometimes never fires onend
+        if (s.paused) s.resume();
+        s.speak(u);
+      });
+    }
+  }, [setTalking]);
 
   const speak = useCallback(async (text) => {
     const cfg = live.current;
