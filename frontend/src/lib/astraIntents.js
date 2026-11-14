@@ -48,6 +48,9 @@ export function normalizeAsk(t) {
     let w = words[i];
     if (/^(u|ya|yu|yo)$/.test(w)) w = "you";
     else if (/^(ur|yr)$/.test(w)) w = "your";
+    else if (w === "r") w = "are"; // "who r u"
+    else if (/^(hu|hoo|whu)$/.test(w)) w = "who";
+    else if (/^(urself|yourslef|yourelf|yoursef|yourselfe)$/.test(w)) w = "yourself";
     else if (/^(wat|wht|wut|whta|waht|wht)$/.test(w)) w = "what";
     else if (/^(whats|wats|wts)$/.test(w)) w = "what's";
     else if (w === "abt") w = "about";
@@ -76,9 +79,22 @@ const ASK = new RegExp([
   "describe", "introduce", "present", "is (our|this|the) (project|app|idea|application) (any )?(good|cool|nice|great|ok|okay|useful)",
 ].map((p) => `\\b${p}\\b`).join("|"), "i");
 
+// "Who are you?" and friends get the same introduction -- but not "who are you going to
+// alert?", "who are you calling?" (a question about something else).
+const IDENTITY = new RegExp([
+  "who are you(?! (going|gonna|calling|alerting|sending|messaging|texting|talking to|telling|about to))",
+  "what are you(?! (doing|saying|going|gonna|talking about|thinking))", "what kind of (ai|assistant|robot|bot) are you",
+  "who('?s| is) (this|astra|speaking|talking)", "what('?s| is) astra", "who am i (talking|speaking|chatting) (to|with)",
+  "what'?s your name", "what is your name", "your name",
+  "tell (me|us|them|the judges) about yourself", "introduce yourself", "describe yourself", "say (something )?about yourself",
+  "are you (an? )?(ai|a\\.i|robot|bot|assistant|human|real person|person)",
+].map((p) => `\\b${p}`).join("|"), "i");
+
+export const isIdentityQuestion = (t) => IDENTITY.test(normalizeAsk(t));
+
 export function isProjectQuestion(t) {
   const s = normalizeAsk(t);
-  if (/\b(introduce yourself|who are you)\b/i.test(s)) return true;
+  if (isIdentityQuestion(t)) return true; // "who are you?" -> the same introduction
   if (!PROJECT_THING.test(s)) return false;
   return WHAT_IS.test(s) || ASK.test(s);
 }

@@ -36,6 +36,15 @@ describe("questions Astra answers without the AI", () => {
       "what is your opinion about our project",
     ]) expect(isProjectQuestion(t), t).toBe(true);
   });
+  it("'who are you' and friends get the same introduction", () => {
+    for (const t of [
+      "who are you", "Astra who are you", "who r u", "hu r u", "what are you", "whats ur name", "what is your name",
+      "tell me about yourself", "tell me about urself", "introduce yourself", "who am i talking to", "who is astra",
+      "are you an AI", "are u human", "what kind of ai are you",
+    ]) expect(isProjectQuestion(t), t).toBe(true);
+    for (const t of ["who are you going to alert", "who are you calling", "what are you doing", "who is the flight surgeon", "what is my name"])
+      expect(isProjectQuestion(t), t).toBe(false);
+  });
   it("leaves health and app-usage questions to the AI", () => {
     for (const t of [
       "what is my heart rate on the app", "how am I doing", "open the project page", "what's my sleep score",
