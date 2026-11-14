@@ -56,6 +56,6 @@ describe("questions Astra answers without the AI", () => {
     expect(localAnswer("what do you think about our project?", content)).toEqual({ text: "PROJECT SUMMARY" });
     expect(localAnswer("what can you do?", content)).toEqual({ text: "ABILITIES" });
     expect(localAnswer("how am I doing?", content)).toBeNull();
-    expect(localAnswer("what do you think about our project?", {}).text).toMatch(/most impressive projects/);
+    expect(localAnswer("what do you think about our project?", {}).text).toMatch(/AI assistant for astronauts/);
   });
 });
