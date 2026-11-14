@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAbilitiesQuestion, isProjectQuestion, localAnswer } from "./astraIntents.js";
+import { isAbilitiesQuestion, isProjectQuestion, localAnswer, normalizeAsk } from "./astraIntents.js";
 
 const content = { astra: { project_summary: "PROJECT SUMMARY", abilities: "ABILITIES" } };
 
@@ -12,10 +12,19 @@ describe("questions Astra answers without the AI", () => {
       "describe the app", "do you like our project",
     ]) expect(isProjectQuestion(t), t).toBe(true);
   });
+  it("understands it typed the way people chat (u, ur, wat, abt, typos)", () => {
+    for (const t of [
+      "what do u think about of our project", "what do u think of our project", "wat do you think about our project",
+      "what you think about our project", "What do u thnk about our projct?", "whats ur opinion on our project",
+      "what do ya think abt our project",
+    ]) expect(isProjectQuestion(t), t).toBe(true);
+    expect(isAbilitiesQuestion("wat can u do")).toBe(true);
+    expect(normalizeAsk("what do u think about of our project")).toBe("what do you think about our project");
+  });
   it("leaves health and app-usage questions to the AI", () => {
     for (const t of [
       "what is my heart rate on the app", "how am I doing", "open the project page", "what's my sleep score",
-      "explain my blood pressure", "tell me about my sleep", "what do you think about my mood",
+      "explain my blood pressure", "tell me about my sleep", "what do you think about my mood", "what do u think about my mood",
     ]) expect(isProjectQuestion(t), t).toBe(false);
   });
   it("hears 'what can you do'", () => {

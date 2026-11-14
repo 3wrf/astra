@@ -4,6 +4,26 @@
 // The words live in config/content.json ("astra"), so the team can edit them without code.
 //
 // Kept strict on purpose: "what is my heart rate on the app?" must still go to the AI.
+// But people type the way they talk ("what do u think about of our project"), so the text
+// is tidied first: u -> you, ur -> your, wat -> what, thnk -> think, projct -> project...
+
+/** Common chat shorthand and typos -> plain words, so the checks below can stay simple. */
+export function normalizeAsk(t) {
+  return ` ${String(t || "").toLowerCase()} `
+    .replace(/[’`]/g, "'")
+    .replace(/[^a-z0-9' ]+/g, " ")
+    .replace(/\b(u|ya|yu|yo)\b/g, "you")
+    .replace(/\b(ur|yr)\b/g, "your")
+    .replace(/\b(wat|wht|wut|whta|waht)\b/g, "what")
+    .replace(/\b(whats|wats|wts)\b/g, "what's")
+    .replace(/\b(thnk|thnik|thinck|tink|thik|thing)\b(?= (about|of|abt))/g, "think")
+    .replace(/\babt\b/g, "about")
+    .replace(/\b(projct|prject|projet|proj|projecct|porject|prokect)\b/g, "project")
+    .replace(/\bwhat you think\b/g, "what do you think") // "what you think about..."
+    .replace(/\bthink about of\b/g, "think about")        // "what do u think about of our project"
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 const PROJECT_THING = /\b((our|this|the|your|my) (project|app|application|idea|invention|system|station|hackathon project|solution)|astra|astro ?health( station)?)\b/i;
 const PROJECT_ASK = /\b(what do you think|what'?s your (opinion|take)|your (opinion|thoughts|take)|how do you (like|feel about)|do you like|tell (me|us|them|the judges|everyone) about|summar(y|ise|ize)|pitch|explain|describe|introduce|present|what is|what'?s)\b/i;
@@ -13,14 +33,14 @@ const WHAT_IS = /\bwhat( i|')s (this|our|the|your) (project|app|application|idea
 const OTHER_ASK = /\b(what do you think|what'?s your (opinion|take)|your (opinion|thoughts|take)|how do you (like|feel about)|do you like|tell (me|us|them|the judges|everyone) about|summar(y|ise|ize)|pitch|explain|describe|introduce|present)\b/i;
 
 export function isProjectQuestion(t) {
-  const s = String(t || "");
+  const s = normalizeAsk(t);
   if (/\b(introduce yourself|who are you)\b/i.test(s)) return true;
   if (!PROJECT_THING.test(s) || !PROJECT_ASK.test(s)) return false;
   return WHAT_IS.test(s) || OTHER_ASK.test(s);
 }
 
 export const isAbilitiesQuestion = (t) =>
-  /\bwhat (else |all |things )?(can|could) you do\b|\bwhat are your (abilities|skills|features|powers)\b|\bhow can you help( me| us)?\b|\bwhat do you do\b/i.test(String(t || ""));
+  /\bwhat (else |all |things )?(can|could) you do\b|\bwhat are your (abilities|skills|features|powers)\b|\bhow can you help( me| us)?\b|\bwhat do you do\b/i.test(normalizeAsk(t));
 
 const FALLBACK = {
   project_summary: "I love it! ASTRA helps astronauts check their own health far from Earth, and tells them what to do next.",
